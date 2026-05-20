@@ -223,7 +223,7 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
         # Para Scotiabank (interno): cuenta de 10 digitos va en col F, forma de pago "CTA. AHORROS SOLES"
         # Para otros bancos: CCI de 20 digitos va en col G, forma de pago "CTA. INTERBANCARIA SOLES"
         is_scotia = (p.get('banco') or '').upper() == 'SCOTIABANK'
-        forma_pago = 'CTA. AHORROS SOLES' if is_scotia else 'CTA. INTERBANCARIA SOLES'
+        forma_pago = 'CTA. AHORRO SOLES SCOTIABANK' if is_scotia else 'CTA. INTERBANCARIA SOLES'
         cells = [
             f'<c r="B{row_n}" t="s"><v>{get_str_idx("CARNET EXTRANJERÍA" if tipo_doc == "CE" else "DNI")}</v></c>',
             f'<c r="C{row_n}" t="s"><v>{get_str_idx(doc_str)}</v></c>',
@@ -236,9 +236,11 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
             cells.append(f'<c r="G{row_n}" t="s"><v>{get_str_idx(p.get("cuenta_cci",""))}</v></c>')
         # Referencia: si el worker tiene su propio cliente (multi-cliente), usarlo; sino fallback al global
         worker_cliente = w.get('cliente') or w.get('_cliente_label') or cliente_label
+        # Normalizar para macro: max 20 chars, sin "-" (Daniel lo confirmo). 'PPC-PLUSPETROL' -> 'PPC'.
+        ref_cliente = (worker_cliente or 'BV').split('-')[0].strip()[:13]
         cells += [
             f'<c r="H{row_n}"><v>{w["total"]}</v></c>',
-            f'<c r="I{row_n}" t="s"><v>{get_str_idx(f"VIATICO {worker_cliente}")}</v></c>',
+            f'<c r="I{row_n}" t="s"><v>{get_str_idx(f"VIATICO {ref_cliente}")}</v></c>',
         ]
         correo = p.get('correo_corporativo') or p.get('correo_personal') or ''
         if correo:
@@ -250,7 +252,10 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
 
     def row_replacer(m):
         r_attr = int(m.group(1))
-        if r_attr < 8 or r_attr > 30: return m.group(0)
+        # Rango r=8..50 cubre filas de datos del template viejo (que tenia trabajadores
+        # hardcoded de un test anterior en r=8..42). Si la fila no esta en new_rows_by_n,
+        # devolver '' (elimina la fila vieja). Asi el output solo tiene los workers actuales.
+        if r_attr < 8 or r_attr > 50: return m.group(0)
         return new_rows_by_n.get(r_attr, '')
 
     sheet_xml_new = re.sub(r'<row\s+r="(\d+)"[^>]*?>.*?</row>', row_replacer, sheet_xml, flags=re.DOTALL)
