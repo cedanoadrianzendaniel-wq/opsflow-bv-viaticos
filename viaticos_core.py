@@ -109,6 +109,19 @@ def generate_consolidado_xlsx(workers_with_personal, cliente_data, mes_label):
             ns.row_dimensions[row_num].height = dim.height
         for mc in template_sheet.merged_cells.ranges:
             ns.merge_cells(str(mc))
+        # Marcar checkbox Viaticos (E1) y agregar logo BV en A1
+        ns.cell(row=1, column=5, value='X')
+        try:
+            from openpyxl.drawing.image import Image as XlsxImage
+            logo_path = os.path.join(TEMPLATES_DIR, 'logo_bureau_veritas.jpg')
+            if os.path.exists(logo_path):
+                img = XlsxImage(logo_path)
+                img.width = 110
+                img.height = 80
+                img.anchor = 'A1'
+                ns.add_image(img)
+        except Exception:
+            pass
         ns.cell(row=3, column=3, value=datetime.now().strftime('%Y-%m-%d'))
         ns.cell(row=3, column=6, value=cliente_data.get('numero_contrato',''))
         ns.cell(row=6, column=4, value=p['nombre_completo'])
