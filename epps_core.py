@@ -136,13 +136,19 @@ def generate_epp_excel(trabajador: dict, items: list, cliente_data: dict = None,
     ws = wb['F-004']
 
     # Re-insertar logo BV (openpyxl pierde la referencia al guardar)
+    _logo_err = None
     if os.path.exists(LOGO_PATH):
         ws._images = []  # limpiar referencias rotas
-        img = XlsxImage(LOGO_PATH)
-        img.width = 110
-        img.height = 80
-        img.anchor = 'A1'
-        ws.add_image(img)
+        try:
+            img = XlsxImage(LOGO_PATH)
+            img.width = 110
+            img.height = 80
+            img.anchor = 'A1'
+            ws.add_image(img)
+        except Exception as e:
+            import traceback
+            _logo_err = f'{type(e).__name__}: {e} | {traceback.format_exc()[:500]}'
+            print(f'[EPP LOGO ERROR] {_logo_err}')
 
     # Header
     ws['B5'] = trabajador.get('division') or 'INDUSTRIA'
@@ -184,7 +190,7 @@ def generate_epp_excel(trabajador: dict, items: list, cliente_data: dict = None,
 
     out = io.BytesIO()
     wb.save(out)
-    return out.getvalue(), {'no_match_epps': no_match, 'matched_count': len(items) - len(no_match)}
+    return out.getvalue(), {'no_match_epps': no_match, 'matched_count': len(items) - len(no_match), 'logo_err': _logo_err}
 
 
 # ============================================================
