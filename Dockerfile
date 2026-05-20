@@ -6,7 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY templates/ /app/templates/
-COPY viaticos_core.py main.py /app/
+COPY viaticos_core.py epps_core.py main.py /app/
 
 EXPOSE 3000
 
