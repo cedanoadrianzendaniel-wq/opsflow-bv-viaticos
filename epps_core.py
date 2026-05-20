@@ -111,6 +111,17 @@ def _format_date(v):
     return None
 
 
+def _add_months(d: datetime, months: int) -> datetime:
+    """Suma N meses a una fecha. Si el dia destino no existe (ej 31 feb), usa el ultimo dia del mes."""
+    import calendar
+    new_month = d.month + months
+    new_year = d.year + (new_month - 1) // 12
+    new_month = ((new_month - 1) % 12) + 1
+    last_day = calendar.monthrange(new_year, new_month)[1]
+    new_day = min(d.day, last_day)
+    return d.replace(year=new_year, month=new_month, day=new_day)
+
+
 def generate_epp_excel(trabajador: dict, items: list, cliente_data: dict = None, observaciones: str = None) -> bytes:
     """Genera el F-004 lleno y devuelve bytes del xlsx.
 
@@ -143,6 +154,9 @@ def generate_epp_excel(trabajador: dict, items: list, cliente_data: dict = None,
             ws[f'C{row}'] = fe
             ws[f'C{row}'].number_format = 'dd/mm/yyyy'
         fc = _format_date(item.get('fecha_cambio'))
+        if not fc and fe:
+            # Default: fecha_cambio = fecha_entrega + 6 meses
+            fc = _add_months(fe, 6)
         if fc:
             ws[f'D{row}'] = fc
             ws[f'D{row}'].number_format = 'dd/mm/yyyy'
