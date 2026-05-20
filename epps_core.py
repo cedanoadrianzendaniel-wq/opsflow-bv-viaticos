@@ -138,14 +138,11 @@ def generate_epp_excel(trabajador: dict, items: list, cliente_data: dict = None,
     # Re-insertar logo BV (openpyxl pierde la referencia al guardar)
     if os.path.exists(LOGO_PATH):
         ws._images = []  # limpiar referencias rotas
-        try:
-            img = XlsxImage(LOGO_PATH)
-            img.width = 110
-            img.height = 80
-            img.anchor = 'A1'
-            ws.add_image(img)
-        except Exception:
-            pass
+        img = XlsxImage(LOGO_PATH)
+        img.width = 110
+        img.height = 80
+        img.anchor = 'A1'
+        ws.add_image(img)
 
     # Header
     ws['B5'] = trabajador.get('division') or 'INDUSTRIA'
