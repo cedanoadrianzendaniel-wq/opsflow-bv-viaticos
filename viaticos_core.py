@@ -234,9 +234,11 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
             cells.append(f'<c r="F{row_n}" t="s"><v>{get_str_idx(p.get("cuenta_cci",""))}</v></c>')
         else:
             cells.append(f'<c r="G{row_n}" t="s"><v>{get_str_idx(p.get("cuenta_cci",""))}</v></c>')
+        # Referencia: si el worker tiene su propio cliente (multi-cliente), usarlo; sino fallback al global
+        worker_cliente = w.get('cliente') or w.get('_cliente_label') or cliente_label
         cells += [
             f'<c r="H{row_n}"><v>{w["total"]}</v></c>',
-            f'<c r="I{row_n}" t="s"><v>{get_str_idx(f"VIATICO {cliente_label}")}</v></c>',
+            f'<c r="I{row_n}" t="s"><v>{get_str_idx(f"VIATICO {worker_cliente}")}</v></c>',
         ]
         correo = p.get('correo_corporativo') or p.get('correo_personal') or ''
         if correo:
