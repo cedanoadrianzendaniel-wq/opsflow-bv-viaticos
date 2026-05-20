@@ -122,6 +122,19 @@ def generate_consolidado_xlsx(workers_with_personal, cliente_data, mes_label):
                 ns.add_image(img)
         except Exception:
             pass
+        # Page setup: fit to 1 page (asi el F-ADM-002 cabe en 1 hoja al imprimir/PDF)
+        try:
+            from openpyxl.worksheet.properties import PageSetupProperties
+            from openpyxl.worksheet.page import PageMargins
+            ns.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+            ns.page_setup.fitToWidth = 1
+            ns.page_setup.fitToHeight = 1
+            ns.page_setup.orientation = 'portrait'
+            ns.page_setup.paperSize = 9  # A4
+            ns.page_margins = PageMargins(left=0.3, right=0.3, top=0.3, bottom=0.3, header=0.2, footer=0.2)
+            ns.print_area = f'A1:G29'
+        except Exception:
+            pass
         ns.cell(row=3, column=3, value=datetime.now().strftime('%Y-%m-%d'))
         ns.cell(row=3, column=6, value=cliente_data.get('numero_contrato',''))
         ns.cell(row=6, column=4, value=p['nombre_completo'])
