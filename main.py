@@ -154,6 +154,26 @@ def epp_lista():
     return {'epps': EPP_LIST}
 
 
+@app.get("/epp/debug")
+def epp_debug():
+    """Diagnostico: existe LOGO_PATH? que archivos hay en templates/?"""
+    import os as _os
+    from epps_core import LOGO_PATH, TEMPLATE_PATH
+    tpath_dir = _os.path.dirname(TEMPLATE_PATH)
+    files = []
+    if _os.path.isdir(tpath_dir):
+        for f in sorted(_os.listdir(tpath_dir)):
+            full = _os.path.join(tpath_dir, f)
+            files.append({'name': f, 'size': _os.path.getsize(full), 'is_file': _os.path.isfile(full)})
+    return {
+        'logo_path': LOGO_PATH,
+        'logo_exists': _os.path.exists(LOGO_PATH),
+        'logo_size': _os.path.getsize(LOGO_PATH) if _os.path.exists(LOGO_PATH) else None,
+        'template_dir': tpath_dir,
+        'template_files': files,
+    }
+
+
 @app.post("/generar_epp")
 def generar_epp(payload: GenerarEppRequest):
     """Genera el F-004 Registro de Entrega de EPP para un trabajador.
