@@ -14,8 +14,9 @@ import os, io, json, zipfile, urllib.request
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from viaticos_core import process_viaticos
+from epps_core import generate_epp_excel, EPP_LIST
 
-app = FastAPI(title="OpsFlow BV - Viaticos Service", version="1.0")
+app = FastAPI(title="OpsFlow BV - Viaticos & EPPs Service", version="1.1")
 
 # Config via env
 NOCO_API_TOKEN = os.environ.get('NOCO_API_TOKEN', '')
@@ -103,4 +104,88 @@ async def procesar_json(
         'consolidado_filename': f'Consolidado_Viaticos_{cliente}_{mes_label}.xlsx',
         'macro_filename': f'Macro_SCT_Soles_{cliente}_{mes_label}.xlsm',
         'metadata': result['metadata'],
+    }
+
+
+# ============================================================
+# EPP - F-004 Registro de Entrega de EPP
+# ============================================================
+from fastapi import Body
+from pydantic import BaseModel
+from typing import List, Optional
+
+class EppItem(BaseModel):
+    nombre_epp: str
+    cantidad: Optional[int] = None
+    fecha_entrega: Optional[str] = None  # YYYY-MM-DD o DD/MM/YYYY
+    fecha_cambio: Optional[str] = None
+    talla: Optional[str] = None
+    cantidad_pendiente: Optional[int] = None
+    descripcion_cambio: Optional[str] = None
+
+class GenerarEppRequest(BaseModel):
+    dni: Optional[str] = None
+    nombre_trabajador: Optional[str] = None  # si no hay dni, intenta match por nombre
+    observaciones: Optional[str] = None
+    items: List[EppItem]
+
+
+@app.get("/epp/lista_oficial")
+def epp_lista():
+    """Devuelve la lista oficial de los 17 EPPs (orden = row del template)."""
+    return {'epps': EPP_LIST}
+
+
+@app.post("/generar_epp")
+def generar_epp(payload: GenerarEppRequest):
+    """Genera el F-004 Registro de Entrega de EPP para un trabajador.
+
+    Busca al trabajador en personal_bv por DNI (preferido) o nombre.
+    Devuelve el xlsx en base64 + metadata.
+    """
+    import base64
+    if not NOCO_API_TOKEN:
+        raise HTTPException(500, "NOCO_API_TOKEN no configurado")
+
+    # Buscar trabajador
+    trab = None
+    if payload.dni:
+        resp = http_get(f'{NOCO_BASE}/tables/{TABLE_PERSONAL}/records?where=(dni,eq,{payload.dni})&limit=1')
+        if resp.get('list'):
+            trab = resp['list'][0]
+    if not trab and payload.nombre_trabajador:
+        # Fuzzy: tokens del nombre todos en personal.nombre_completo
+        nombre_norm = payload.nombre_trabajador.upper()
+        tokens = [t for t in nombre_norm.split() if len(t) >= 3]
+        if tokens:
+            where = '~and'.join([f'(nombre_completo,like,%25{t}%25)' for t in tokens])
+            resp = http_get(f'{NOCO_BASE}/tables/{TABLE_PERSONAL}/records?where={where}&limit=5')
+            if len(resp.get('list', [])) == 1:
+                trab = resp['list'][0]
+            elif len(resp.get('list', [])) > 1:
+                return JSONResponse(status_code=400, content={
+                    'error': 'multiples_matches',
+                    'matches': [{'Id': p['Id'], 'nombre': p['nombre_completo'], 'dni': p.get('dni')} for p in resp['list']]
+                })
+    if not trab:
+        raise HTTPException(404, f"Trabajador no encontrado (dni={payload.dni}, nombre={payload.nombre_trabajador})")
+
+    items = [it.model_dump() for it in payload.items]
+    xlsx_bytes, meta = generate_epp_excel(trab, items, observaciones=payload.observaciones)
+
+    return {
+        'xlsx_b64': base64.b64encode(xlsx_bytes).decode('ascii'),
+        'filename': f'EPP_{(trab.get("cliente") or "BV")}-{trab.get("nombre_completo","").replace(" ","_")}.xlsx',
+        'trabajador': {
+            'Id': trab.get('Id'),
+            'dni': trab.get('dni'),
+            'nombre_completo': trab.get('nombre_completo'),
+            'cliente': trab.get('cliente'),
+            'division': trab.get('division'),
+            'puesto': trab.get('puesto'),
+            'correo_personal': trab.get('correo_personal'),
+            'correo_corporativo': trab.get('correo_corporativo'),
+            'telefono': trab.get('telefono'),
+        },
+        'meta': meta,
     }
