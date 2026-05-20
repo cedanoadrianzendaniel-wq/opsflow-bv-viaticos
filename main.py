@@ -15,6 +15,24 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from viaticos_core import process_viaticos
 from epps_core import generate_epp_excel, EPP_LIST, parse_excel_masivo
+import boto3
+from botocore.client import Config as BotoConfig
+
+# MinIO config
+MINIO_ENDPOINT = os.environ.get('MINIO_ENDPOINT', 'https://control-vacaciones-bv-minio.dxgsgp.easypanel.host')
+MINIO_ACCESS_KEY = os.environ.get('MINIO_ACCESS_KEY', 'bvopsflow')
+MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY', 'BureauVeritas2026ASIS')
+MINIO_BUCKET = os.environ.get('MINIO_BUCKET', 'prorrogas')
+
+def _s3_client():
+    return boto3.client(
+        's3',
+        endpoint_url=MINIO_ENDPOINT,
+        aws_access_key_id=MINIO_ACCESS_KEY,
+        aws_secret_access_key=MINIO_SECRET_KEY,
+        config=BotoConfig(signature_version='s3v4', s3={'addressing_style': 'path'}),
+        region_name='us-east-1',
+    )
 
 app = FastAPI(title="OpsFlow BV - Viaticos & EPPs Service", version="1.1")
 
@@ -256,12 +274,39 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
         xlsx_bytes, meta = generate_epp_excel(trab_data, fila['items'])
         filename = f'EPP_{(trab_data.get("cliente") or "BV")}-{trab_data.get("nombre_completo","").replace(" ","_")}.xlsx'
 
+        # Upload to MinIO + generate presigned URL
+        import datetime as _dt
+        lima = _dt.datetime.utcnow() - _dt.timedelta(hours=5)
+        key = f'epps/{lima.strftime("%Y-%m-%d")}/{int(_dt.datetime.utcnow().timestamp()*1000)}_{matched}_{filename}'
+        try:
+            s3 = _s3_client()
+            s3.put_object(
+                Bucket=MINIO_BUCKET,
+                Key=key,
+                Body=xlsx_bytes,
+                ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
+            presigned_url = s3.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': MINIO_BUCKET, 'Key': key},
+                ExpiresIn=604800,  # 7 días
+            )
+            url_public = f'{MINIO_ENDPOINT}/{MINIO_BUCKET}/{key}'
+        except Exception as ex:
+            results.append({
+                'matched': False,
+                'nombre_input': fila['nombre'],
+                'reason': f'upload_minio_error: {ex}',
+            })
+            continue
+
         results.append({
             'matched': True,
             'nombre_input': fila['nombre'],
-            'xlsx_b64': base64.b64encode(xlsx_bytes).decode('ascii'),
             'filename': filename,
             'items_count': len(fila['items']),
+            'url_minio_original': url_public,
+            'presigned_url': presigned_url,
             'trabajador': {
                 'Id': trab.get('Id'),
                 'dni': trab.get('dni'),
