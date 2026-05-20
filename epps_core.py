@@ -135,6 +135,16 @@ def generate_epp_excel(trabajador: dict, items: list, cliente_data: dict = None,
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb['F-004']
 
+    # Reset sheet view: vista normal, scroll en A1, sin freeze panes (el template venia con freeze B12 leftover)
+    ws.sheet_view.view = 'normal'
+    ws.sheet_view.topLeftCell = 'A1'
+    ws.sheet_view.zoomScale = 100
+    ws.sheet_view.zoomScaleNormal = 100
+    ws.freeze_panes = None
+    # Limpiar el pane viejo del template
+    if ws.sheet_view.pane is not None:
+        ws.sheet_view.pane = None
+
     # Re-insertar logo BV (openpyxl pierde la referencia al guardar)
     _logo_err = None
     if os.path.exists(LOGO_PATH):
