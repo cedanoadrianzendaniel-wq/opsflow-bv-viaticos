@@ -12,8 +12,10 @@ Tambien procesa Excel masivo (formato 'Entrega de Epps {CLIENTE}.xlsx'):
 import io, os, re, unicodedata
 from datetime import datetime
 from openpyxl import load_workbook
+from openpyxl.drawing.image import Image as XlsxImage
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'templates', 'epp_template.xlsx')
+LOGO_PATH = os.path.join(os.path.dirname(__file__), 'templates', 'logo_bureau_veritas.jpg')
 
 # Lista oficial de 17 EPPs (orden de filas en el template: row 12 -> EPP_LIST[0], etc)
 EPP_LIST = [
@@ -132,6 +134,18 @@ def generate_epp_excel(trabajador: dict, items: list, cliente_data: dict = None,
     """
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb['F-004']
+
+    # Re-insertar logo BV (openpyxl pierde la referencia al guardar)
+    if os.path.exists(LOGO_PATH):
+        ws._images = []  # limpiar referencias rotas
+        try:
+            img = XlsxImage(LOGO_PATH)
+            img.width = 110
+            img.height = 80
+            img.anchor = 'A1'
+            ws.add_image(img)
+        except Exception:
+            pass
 
     # Header
     ws['B5'] = trabajador.get('division') or 'INDUSTRIA'
