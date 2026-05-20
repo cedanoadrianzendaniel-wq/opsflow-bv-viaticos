@@ -15,6 +15,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from viaticos_core import process_viaticos
 from epps_core import generate_epp_excel, EPP_LIST, parse_excel_masivo
+from viaticos_consolidado_core import process_consolidado_final, parse_consolidado_final
 import boto3
 from botocore.client import Config as BotoConfig
 
@@ -227,6 +228,39 @@ def generar_epp(payload: GenerarEppRequest):
         },
         'meta': meta,
     }
+
+
+@app.post("/procesar_viaticos_consolidado_final")
+async def procesar_viaticos_consolidado_final_endpoint(
+    file: UploadFile = File(...),
+    mes_label: str = Form(...),  # YYYY-MM
+):
+    """Procesa el archivo 'Viaticos Proyecto Varios_{mes}.xlsx' (multi-cliente).
+    Devuelve JSON con consolidado + macro en base64.
+    """
+    import base64
+    if not NOCO_API_TOKEN:
+        raise HTTPException(500, "NOCO_API_TOKEN no configurado")
+    try:
+        personal_list = http_get(f'{NOCO_BASE}/tables/{TABLE_PERSONAL}/records?limit=500&fields=Id,nombre_completo,dni,puesto,banco,tipo_cuenta_abono,cuenta_cci,tipo_moneda,tipo_documento,cliente,division,correo_personal,correo_corporativo').get('list', [])
+        clientes_list = http_get(f'{NOCO_BASE}/tables/{TABLE_CLIENTES}/records?limit=20').get('list', [])
+
+        content = await file.read()
+        result = process_consolidado_final(content, personal_list, clientes_list, mes_label)
+
+        return {
+            'consolidado_xlsx_b64': base64.b64encode(result['consolidado_xlsx']).decode('ascii'),
+            'macro_xlsm_b64': base64.b64encode(result['macro_xlsm']).decode('ascii'),
+            'consolidado_filename': f'Consolidado_Viaticos_MultiCliente_{mes_label}.xlsx',
+            'macro_filename': f'Macro_SCT_Soles_MultiCliente_{mes_label}.xlsm',
+            'metadata': result['metadata'],
+        }
+    except HTTPException: raise
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        import traceback
+        return JSONResponse(status_code=500, content={'error': str(e), 'trace': traceback.format_exc()[:2000]})
 
 
 @app.post("/procesar_epp_masivo")
