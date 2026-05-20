@@ -220,12 +220,21 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
         doc_str = str(p.get('dni',''))
         if tipo_doc == 'CE' and len(doc_str) < 9:
             doc_str = doc_str.zfill(9)
+        # Para Scotiabank (interno): cuenta de 10 digitos va en col F, forma de pago "CTA. AHORROS SOLES"
+        # Para otros bancos: CCI de 20 digitos va en col G, forma de pago "CTA. INTERBANCARIA SOLES"
+        is_scotia = (p.get('banco') or '').upper() == 'SCOTIABANK'
+        forma_pago = 'CTA. AHORROS SOLES' if is_scotia else 'CTA. INTERBANCARIA SOLES'
         cells = [
             f'<c r="B{row_n}" t="s"><v>{get_str_idx("CARNET EXTRANJERÍA" if tipo_doc == "CE" else "DNI")}</v></c>',
             f'<c r="C{row_n}" t="s"><v>{get_str_idx(doc_str)}</v></c>',
             f'<c r="D{row_n}" t="s"><v>{get_str_idx(p.get("nombre_completo",""))}</v></c>',
-            f'<c r="E{row_n}" t="s"><v>{get_str_idx("CTA. INTERBANCARIA SOLES")}</v></c>',
-            f'<c r="G{row_n}" t="s"><v>{get_str_idx(p.get("cuenta_cci",""))}</v></c>',
+            f'<c r="E{row_n}" t="s"><v>{get_str_idx(forma_pago)}</v></c>',
+        ]
+        if is_scotia:
+            cells.append(f'<c r="F{row_n}" t="s"><v>{get_str_idx(p.get("cuenta_cci",""))}</v></c>')
+        else:
+            cells.append(f'<c r="G{row_n}" t="s"><v>{get_str_idx(p.get("cuenta_cci",""))}</v></c>')
+        cells += [
             f'<c r="H{row_n}"><v>{w["total"]}</v></c>',
             f'<c r="I{row_n}" t="s"><v>{get_str_idx(f"VIATICO {cliente_label}")}</v></c>',
         ]
