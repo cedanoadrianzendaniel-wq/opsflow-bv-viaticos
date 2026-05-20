@@ -214,7 +214,118 @@ def parse_consolidado_final(content: bytes):
         single = _parse_single_cliente_sheet(wb)
         if single:
             workers = single
+
+    # Fallback IA: si los parsers tradicionales fallan, llamar Claude
+    if not workers:
+        try:
+            workers = _claude_parse_workers(wb)
+        except Exception as e:
+            print(f'[CLAUDE PARSE ERROR] {e}')
+
     return workers
+
+
+def _excel_to_text(wb, max_rows=60, max_cols=20):
+    """Convierte cada hoja del workbook a texto tipo tabla para enviar a Claude."""
+    out = []
+    for sname in wb.sheetnames:
+        ws = wb[sname]
+        if ws.max_row == 0: continue
+        out.append(f'\n=== Sheet: "{sname}" ({ws.max_row}x{ws.max_column}) ===')
+        rows = []
+        for r in range(1, min(ws.max_row + 1, max_rows + 1)):
+            cells = []
+            for c in range(1, min(ws.max_column + 1, max_cols + 1)):
+                v = ws.cell(row=r, column=c).value
+                if v is not None:
+                    s = str(v).replace('\n', ' ').replace('\t', ' ')
+                    if len(s) > 50: s = s[:47] + '...'
+                    cells.append(f'{chr(64+c)}{r}={s}')
+            if cells:
+                rows.append(' | '.join(cells))
+        out.append('\n'.join(rows))
+    return '\n'.join(out)
+
+
+def _claude_parse_workers(wb):
+    """Llama Claude para extraer trabajadores + categorias F-ADM-002 del archivo.
+    Usa ANTHROPIC_API_KEY env var. Devuelve list[worker] o None.
+    """
+    import os, json as _json
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        print('[CLAUDE] ANTHROPIC_API_KEY no configurada — fallback IA deshabilitado')
+        return None
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    text = _excel_to_text(wb)
+
+    system_prompt = """Eres un parser de archivos de viaticos para Bureau Veritas Peru. Recibes un Excel y extraes:
+1. Lista de trabajadores con sus categorias F-ADM-002:
+   - cat_A: Hospedaje y Alimentacion (alimentacion + hospedaje + agua + alim/hosp)
+   - cat_B: Alquiler de Equipos
+   - cat_C: Transporte (combustible + movilizacion)
+   - cat_D: Lavado y Limpieza (lavanderia + lavado camioneta + cochera)
+   - cat_E: Otros (otros + bonos + copias)
+2. Cliente al que pertenece cada trabajador. Valores validos:
+   TGP, TDP, APM, PPC-PLUSPETROL, COGA
+   Inferir del nombre de la hoja, del proyecto, o del bloque del trabajador.
+
+Devuelve SOLO un JSON valido (sin markdown, sin texto extra) con esta estructura exacta:
+{
+  "workers": [
+    {
+      "nombre": "NOMBRE COMPLETO",
+      "cliente": "APM",
+      "cargo": "SUPERVISOR HSE",
+      "cat_A": 1500.0,
+      "cat_B": 100.0,
+      "cat_C": 0.0,
+      "cat_D": 0.0,
+      "cat_E": 0.0,
+      "total": 1600.0
+    }
+  ]
+}
+
+Reglas:
+- Solo trabajadores con total > 0.
+- Ignora filas de subtotal/total general.
+- Si una celda esta vacia o tiene #N/A, tratarla como 0.
+- Los nombres en MAYUSCULAS."""
+
+    msg = client.messages.create(
+        model='claude-haiku-4-5-20251001',
+        max_tokens=4000,
+        system=system_prompt,
+        messages=[{'role':'user','content': f'Archivo:\n\n{text}\n\nExtrae los trabajadores.'}]
+    )
+    raw = msg.content[0].text.strip()
+    # Strip markdown si Claude lo agrega
+    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+    raw = re.sub(r'```\s*$', '', raw)
+    raw = raw.strip()
+    data = _json.loads(raw)
+    workers_raw = data.get('workers', [])
+    out = []
+    for w in workers_raw:
+        out.append({
+            'nombre': str(w.get('nombre','')).strip().upper(),
+            'cliente': w.get('cliente'),
+            'cliente_block_name': w.get('cliente',''),
+            'cargo': w.get('cargo',''),
+            'sector': '', 'localidad': '', 'dias_servicio': '',
+            'cat_A': float(w.get('cat_A', 0) or 0),
+            'cat_B': float(w.get('cat_B', 0) or 0),
+            'cat_C': float(w.get('cat_C', 0) or 0),
+            'cat_D': float(w.get('cat_D', 0) or 0),
+            'cat_E': float(w.get('cat_E', 0) or 0),
+            'total': float(w.get('total', 0) or 0),
+        })
+    print(f'[CLAUDE] Extrajo {len(out)} trabajadores')
+    return out
 
 
 def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_label):
