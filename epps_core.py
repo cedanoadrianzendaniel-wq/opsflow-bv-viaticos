@@ -5,6 +5,9 @@ Carga templates/epp_template.xlsx (con 17 EPPs hardcoded en filas 12-28) y relle
 - Tabla de EPPs: solo las filas correspondientes a los items entregados (resto queda en blanco)
 - Observaciones
 - Footer (Bureau Veritas + cliente)
+
+Tambien procesa Excel masivo (formato 'Entrega de Epps {CLIENTE}.xlsx'):
+- Cada fila = 1 trabajador, columnas F-Q son EPPs (talla o cantidad)
 """
 import io, os, re, unicodedata
 from datetime import datetime
@@ -157,3 +160,108 @@ def generate_epp_excel(trabajador: dict, items: list, cliente_data: dict = None,
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue(), {'no_match_epps': no_match, 'matched_count': len(items) - len(no_match)}
+
+
+# ============================================================
+# Excel masivo "Entrega de Epps {CLIENTE}.xlsx"
+# ============================================================
+
+# Mapeo de columnas del Excel masivo -> EPP_LIST index (None = no aplicable)
+# A=nombre, B=proyecto, C=cc, D=puesto, E=fecha entrega
+# F=Ignifugo Pantalon (talla, cant default 2) -> Pantalos ignifugo (idx 3)
+# G=Ignifugo Camisa (talla, cant 2) -> Camisa ignifugo (idx 2)
+# H=Pantalon Jean (talla, cant 2) -> Pantalon Jean (idx 16)
+# I=Camisa Oxford (talla, cant 2) -> Camisa Oxford (idx 15)
+# J=Chaleco (talla, cant 1) -> Chaleco anaranjado (idx 8)
+# K=Zapato (talla, cant 1) -> Botas cana alta (idx 10)
+# L=Capotin (cant) -> Capotin (idx 12)
+# M=Casco (cant) -> Casco (idx 0)
+# N=Tapanuca (cant) -> Barbiquejo (idx 1)
+# O=Lentes (cant) -> Lentes claros (idx 5)
+# P=Guantes (cant) -> Guantes badana (idx 14)
+# Q=Orejera (cant) -> Protector auditivo (idx 7)
+MASIVO_MAP = {
+    'F': {'idx': 3, 'value_type': 'talla', 'default_cantidad': 2},
+    'G': {'idx': 2, 'value_type': 'talla', 'default_cantidad': 2},
+    'H': {'idx': 16, 'value_type': 'talla', 'default_cantidad': 2},
+    'I': {'idx': 15, 'value_type': 'talla', 'default_cantidad': 2},
+    'J': {'idx': 8, 'value_type': 'talla', 'default_cantidad': 1},
+    'K': {'idx': 10, 'value_type': 'talla', 'default_cantidad': 1},
+    'L': {'idx': 12, 'value_type': 'cantidad', 'default_talla': None},
+    'M': {'idx': 0, 'value_type': 'cantidad'},
+    'N': {'idx': 1, 'value_type': 'cantidad'},
+    'O': {'idx': 5, 'value_type': 'cantidad'},
+    'P': {'idx': 14, 'value_type': 'cantidad'},
+    'Q': {'idx': 7, 'value_type': 'cantidad'},
+}
+
+COL_LETTER = {1:'A',2:'B',3:'C',4:'D',5:'E',6:'F',7:'G',8:'H',9:'I',10:'J',11:'K',12:'L',13:'M',14:'N',15:'O',16:'P',17:'Q'}
+
+
+def parse_excel_masivo(content: bytes) -> list:
+    """Parsea el Excel 'Entrega de Epps {cliente}.xlsx' y devuelve lista de trabajadores con sus items.
+
+    Output: [
+      {
+        'nombre': str, 'proyecto': str, 'cc': str, 'puesto': str, 'fecha_entrega': str,
+        'items': [{'nombre_epp':..., 'cantidad':..., 'talla':..., 'fecha_entrega':...}]
+      }, ...
+    ]
+    """
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb[wb.sheetnames[0]]
+
+    # Validar headers en R1
+    headers_esperados = ['COLABORADORES', 'PROYECTO']
+    h1 = (ws['A1'].value or '').upper()
+    if 'COLABORADOR' not in h1:
+        raise ValueError(f'Formato no valido. Headers esperados: COLABORADORES en A1, encontrado: {h1!r}')
+
+    out = []
+    for row in range(2, ws.max_row + 1):
+        nombre = ws[f'A{row}'].value
+        if not nombre or not str(nombre).strip():
+            continue
+        proyecto = ws[f'B{row}'].value or ''
+        cc = ws[f'C{row}'].value or ''
+        puesto = ws[f'D{row}'].value or ''
+        fecha_e = ws[f'E{row}'].value
+        if isinstance(fecha_e, datetime):
+            fecha_str = fecha_e.strftime('%Y-%m-%d')
+        elif fecha_e:
+            fecha_str = str(fecha_e)
+        else:
+            fecha_str = None
+
+        items = []
+        for col_letter, mapping in MASIVO_MAP.items():
+            val = ws[f'{col_letter}{row}'].value
+            if val is None or str(val).strip() == '':
+                continue
+            epp_name = EPP_LIST[mapping['idx']]
+            item = {'nombre_epp': epp_name, 'fecha_entrega': fecha_str}
+
+            if mapping['value_type'] == 'talla':
+                # val es talla, cantidad va al default
+                item['talla'] = str(val).strip()
+                item['cantidad'] = mapping.get('default_cantidad', 1)
+            else:
+                # val es cantidad
+                try:
+                    item['cantidad'] = int(float(val))
+                except (ValueError, TypeError):
+                    continue
+                if item['cantidad'] == 0:
+                    continue  # 0 = no entregado
+
+            items.append(item)
+
+        out.append({
+            'nombre': str(nombre).strip().upper(),
+            'proyecto': str(proyecto).strip().upper(),
+            'cc': str(cc).strip(),
+            'puesto': str(puesto).strip().upper(),
+            'fecha_entrega': fecha_str,
+            'items': items,
+        })
+    return out

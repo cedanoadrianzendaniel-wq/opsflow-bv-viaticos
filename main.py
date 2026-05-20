@@ -14,7 +14,7 @@ import os, io, json, zipfile, urllib.request
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from viaticos_core import process_viaticos
-from epps_core import generate_epp_excel, EPP_LIST
+from epps_core import generate_epp_excel, EPP_LIST, parse_excel_masivo
 
 app = FastAPI(title="OpsFlow BV - Viaticos & EPPs Service", version="1.1")
 
@@ -188,4 +188,99 @@ def generar_epp(payload: GenerarEppRequest):
             'telefono': trab.get('telefono'),
         },
         'meta': meta,
+    }
+
+
+@app.post("/procesar_epp_masivo")
+async def procesar_epp_masivo(file: UploadFile = File(...)):
+    """Procesa el Excel masivo 'Entrega de Epps {cliente}.xlsx' (1 fila = 1 trabajador).
+    Para cada trabajador busca match en personal_bv (por nombre fuzzy) y genera el F-004.
+    Devuelve JSON con N entries (cada una con xlsx_b64 + datos del trabajador + items + meta).
+    """
+    import base64
+    if not NOCO_API_TOKEN:
+        raise HTTPException(500, "NOCO_API_TOKEN no configurado")
+
+    content = await file.read()
+    try:
+        filas = parse_excel_masivo(content)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    if not filas:
+        raise HTTPException(400, "Excel vacio (no se detectaron trabajadores)")
+
+    # Fetch personal completo (1 query)
+    personal_resp = http_get(f'{NOCO_BASE}/tables/{TABLE_PERSONAL}/records?limit=500&fields=Id,nombre_completo,dni,puesto,cliente,division,correo_personal,correo_corporativo,telefono')
+    personal_list = personal_resp.get('list', [])
+
+    def find_trab(nombre_input: str):
+        """Match fuzzy: tokens del input deben aparecer en personal.nombre_completo."""
+        import unicodedata
+        def norm(s):
+            s = unicodedata.normalize('NFD', str(s or '').upper())
+            s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+            return s
+        tokens_input = [t for t in norm(nombre_input).split() if len(t) >= 3]
+        if not tokens_input: return None
+        candidatos = []
+        for p in personal_list:
+            n_norm = norm(p.get('nombre_completo'))
+            if all(t in n_norm for t in tokens_input):
+                candidatos.append(p)
+        if len(candidatos) == 1:
+            return candidatos[0]
+        # Si hay varios, devolver el primero (advertencia se incluye en meta)
+        return candidatos[0] if candidatos else None
+
+    results = []
+    no_match = []
+    matched = 0
+    for fila in filas:
+        trab = find_trab(fila['nombre'])
+        if not trab:
+            no_match.append(fila['nombre'])
+            results.append({
+                'nombre_input': fila['nombre'],
+                'matched': False,
+                'reason': 'no_match_en_personal_bv',
+            })
+            continue
+        # Override con datos del Excel si vienen
+        trab_data = {**trab}
+        if fila['puesto']:
+            trab_data['puesto'] = fila['puesto']
+        if fila['proyecto']:
+            trab_data['cliente'] = fila['proyecto']
+
+        xlsx_bytes, meta = generate_epp_excel(trab_data, fila['items'])
+        filename = f'EPP_{(trab_data.get("cliente") or "BV")}-{trab_data.get("nombre_completo","").replace(" ","_")}.xlsx'
+
+        results.append({
+            'matched': True,
+            'nombre_input': fila['nombre'],
+            'xlsx_b64': base64.b64encode(xlsx_bytes).decode('ascii'),
+            'filename': filename,
+            'items_count': len(fila['items']),
+            'trabajador': {
+                'Id': trab.get('Id'),
+                'dni': trab.get('dni'),
+                'nombre_completo': trab.get('nombre_completo'),
+                'cliente': trab_data.get('cliente'),
+                'division': trab.get('division'),
+                'puesto': trab_data.get('puesto'),
+                'correo_personal': trab.get('correo_personal'),
+                'correo_corporativo': trab.get('correo_corporativo'),
+                'telefono': trab.get('telefono'),
+            },
+            'items': fila['items'],
+            'meta': meta,
+        })
+        matched += 1
+
+    return {
+        'total_filas': len(filas),
+        'matched': matched,
+        'no_match': no_match,
+        'results': results,
     }
