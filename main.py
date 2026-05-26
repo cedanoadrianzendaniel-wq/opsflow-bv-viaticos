@@ -383,3 +383,21 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
         'no_match': no_match,
         'results': results,
     }
+
+
+@app.get("/onboarding/presigned_urls")
+def onboarding_presigned_urls():
+    """Devuelve URLs presignadas (7 dias) para los PDFs de onboarding en MinIO."""
+    s3 = _s3_client()
+    files = {
+        'welcome': 'onboarding/Welcome_Colaborador_BV.pdf',
+        'listado': 'onboarding/F-RRHH-091_Listado_Documentos_Ingresos.pdf',
+    }
+    urls = {}
+    for k, key in files.items():
+        urls[k] = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': MINIO_BUCKET, 'Key': key},
+            ExpiresIn=604800,  # 7 dias
+        )
+    return urls
