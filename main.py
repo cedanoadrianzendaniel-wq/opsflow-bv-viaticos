@@ -336,7 +336,14 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
             trab_data['cliente'] = _CLI_MAP.get(_p, trab.get('cliente') or _p)
 
         xlsx_bytes, meta = generate_epp_excel(trab_data, fila['items'])
-        filename = f'EPP_{(trab_data.get("cliente") or "BV")}-{trab_data.get("nombre_completo","").replace(" ","_")}.xlsx'
+        # Filename limpio: sin comas, sin acentos, sin caracteres problematicos para URLs/Meta
+        import re as _re, unicodedata as _ud
+        _nm = trab_data.get("nombre_completo","")
+        _nm = _ud.normalize('NFD', _nm)
+        _nm = ''.join(c for c in _nm if _ud.category(c) != 'Mn')
+        _nm = _re.sub(r'[^A-Za-z0-9 ]', '', _nm).strip()
+        _nm = _re.sub(r'\s+', '_', _nm)
+        filename = f'EPP_{(trab_data.get("cliente") or "BV")}-{_nm}.xlsx'
 
         # Upload to MinIO + generate presigned URL
         import datetime as _dt
