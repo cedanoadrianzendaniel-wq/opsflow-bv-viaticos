@@ -343,12 +343,39 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
         _nm = ''.join(c for c in _nm if _ud.category(c) != 'Mn')
         _nm = _re.sub(r'[^A-Za-z0-9 ]', '', _nm).strip()
         _nm = _re.sub(r'\s+', '_', _nm)
-        filename = f'EPP_{(trab_data.get("cliente") or "BV")}-{_nm}.xlsx'
+        filename_base = f'EPP_{(trab_data.get("cliente") or "BV")}-{_nm}'
+        filename = f'{filename_base}.xlsx'
+        filename_pdf = f'{filename_base}.pdf'
 
-        # Upload to MinIO + generate presigned URL
+        # Convertir xlsx -> pdf con libreoffice (WhatsApp template no acepta xlsx)
+        pdf_bytes = None
+        try:
+            import tempfile, subprocess, os as _os
+            with tempfile.TemporaryDirectory() as tmpdir:
+                xlsx_path = _os.path.join(tmpdir, filename)
+                with open(xlsx_path, 'wb') as f:
+                    f.write(xlsx_bytes)
+                subprocess.run(
+                    ['libreoffice', '--headless', '--convert-to', 'pdf',
+                     '--outdir', tmpdir, xlsx_path],
+                    check=True, capture_output=True, timeout=60
+                )
+                pdf_path = _os.path.join(tmpdir, filename_base + '.pdf')
+                if _os.path.exists(pdf_path):
+                    with open(pdf_path, 'rb') as f:
+                        pdf_bytes = f.read()
+        except Exception as _pdf_ex:
+            meta = {**(meta or {}), 'pdf_conversion_error': str(_pdf_ex)[:200]}
+
+        # Upload to MinIO + generate presigned URL (xlsx + pdf si esta disponible)
         import datetime as _dt
         lima = _dt.datetime.utcnow() - _dt.timedelta(hours=5)
-        key = f'epps/{lima.strftime("%Y-%m-%d")}/{int(_dt.datetime.utcnow().timestamp()*1000)}_{matched}_{filename}'
+        date_str = lima.strftime("%Y-%m-%d")
+        ts = int(_dt.datetime.utcnow().timestamp()*1000)
+        key = f'epps/{date_str}/{ts}_{matched}_{filename}'
+        key_pdf = f'epps/{date_str}/{ts}_{matched}_{filename_pdf}'
+        presigned_url_pdf = None
+        url_public_pdf = None
         try:
             s3 = _s3_client()
             s3.put_object(
@@ -363,6 +390,20 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
                 ExpiresIn=604800,  # 7 días
             )
             url_public = f'{MINIO_ENDPOINT}/{MINIO_BUCKET}/{key}'
+            # Upload PDF si esta disponible
+            if pdf_bytes:
+                s3.put_object(
+                    Bucket=MINIO_BUCKET,
+                    Key=key_pdf,
+                    Body=pdf_bytes,
+                    ContentType='application/pdf',
+                )
+                presigned_url_pdf = s3.generate_presigned_url(
+                    'get_object',
+                    Params={'Bucket': MINIO_BUCKET, 'Key': key_pdf},
+                    ExpiresIn=604800,
+                )
+                url_public_pdf = f'{MINIO_ENDPOINT}/{MINIO_BUCKET}/{key_pdf}'
         except Exception as ex:
             results.append({
                 'matched': False,
@@ -375,9 +416,12 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
             'matched': True,
             'nombre_input': fila['nombre'],
             'filename': filename,
+            'filename_pdf': filename_pdf,
             'items_count': len(fila['items']),
             'url_minio_original': url_public,
+            'url_minio_pdf': url_public_pdf,
             'presigned_url': presigned_url,
+            'presigned_url_pdf': presigned_url_pdf,
             'trabajador': {
                 'Id': trab.get('Id'),
                 'dni': trab.get('dni'),

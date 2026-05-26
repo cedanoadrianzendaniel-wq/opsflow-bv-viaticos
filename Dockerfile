@@ -2,6 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# LibreOffice headless para convertir XLSX -> PDF (necesario para WhatsApp template que rechaza xlsx)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-calc \
+        libreoffice-core \
+        fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
