@@ -329,7 +329,7 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
             _CLI_MAP = {
                 'PPC': 'PPC-PLUSPETROL', 'PLUSPETROL': 'PPC-PLUSPETROL', 'PPC-PLUSPETROL': 'PPC-PLUSPETROL',
                 'TGP': 'TGP', 'COGA': 'TGP', 'TGP-COGA': 'TGP',
-                'TDP': 'TDP', 'TDP-TELEFONICA': 'TDP', 'TELEFONICA': 'TDP',
+                'TDP': 'TDP', 'TERMINALES DEL PERU': 'TDP', 'TERMINALES': 'TDP', 'TDP-TERMINALES': 'TDP',
                 'APM': 'APM', 'APM TERMINALS': 'APM', 'APM-TERMINALS': 'APM',
                 'BACK OFFICE': 'BACK OFFICE', 'BACKOFFICE': 'BACK OFFICE', 'BO': 'BACK OFFICE',
             }
