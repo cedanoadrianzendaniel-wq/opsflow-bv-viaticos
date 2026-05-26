@@ -323,7 +323,17 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
         if fila['puesto']:
             trab_data['puesto'] = fila['puesto']
         if fila['proyecto']:
-            trab_data['cliente'] = fila['proyecto']
+            # Normalize proyecto a los valores canonicos validos en NocoDB
+            # NocoDB single-select valida estrictamente: TGP, TDP, APM, PPC-PLUSPETROL, BACK OFFICE
+            _p = str(fila['proyecto']).strip().upper()
+            _CLI_MAP = {
+                'PPC': 'PPC-PLUSPETROL', 'PLUSPETROL': 'PPC-PLUSPETROL', 'PPC-PLUSPETROL': 'PPC-PLUSPETROL',
+                'TGP': 'TGP', 'COGA': 'TGP', 'TGP-COGA': 'TGP',
+                'TDP': 'TDP', 'TDP-TELEFONICA': 'TDP', 'TELEFONICA': 'TDP',
+                'APM': 'APM', 'APM TERMINALS': 'APM', 'APM-TERMINALS': 'APM',
+                'BACK OFFICE': 'BACK OFFICE', 'BACKOFFICE': 'BACK OFFICE', 'BO': 'BACK OFFICE',
+            }
+            trab_data['cliente'] = _CLI_MAP.get(_p, trab.get('cliente') or _p)
 
         xlsx_bytes, meta = generate_epp_excel(trab_data, fila['items'])
         filename = f'EPP_{(trab_data.get("cliente") or "BV")}-{trab_data.get("nombre_completo","").replace(" ","_")}.xlsx'
