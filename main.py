@@ -35,6 +35,48 @@ def _s3_client():
         region_name='us-east-1',
     )
 
+def _claude_match_worker(nombre_input, personal_list):
+    """Fallback con criterio: cuando el match por tokens falla, Claude resuelve
+    el nombre contra la lista de personal (maneja orden distinto, comas, nombres
+    parciales, typos). Devuelve el dict del trabajador o None."""
+    import re as _re
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        return None
+    try:
+        from anthropic import Anthropic
+        client = Anthropic(api_key=api_key)
+        candidatos = [{'id': p.get('Id'), 'nombre': p.get('nombre_completo'),
+                       'dni': p.get('dni'), 'cliente': p.get('cliente')} for p in personal_list]
+        prompt = (
+            'Tengo un nombre de trabajador escrito en un Excel y debo encontrar a que persona '
+            'de una lista de personal corresponde. Considera que el ORDEN de nombres y apellidos '
+            'puede variar, puede haber comas, abreviaciones, segundos nombres faltantes, o pequenos typos. '
+            'Match por la persona, no por coincidencia exacta de texto.\n\n'
+            f'Nombre del Excel: "{nombre_input}"\n\n'
+            f'Lista de personal (JSON): {json.dumps(candidatos, ensure_ascii=False)}\n\n'
+            'Responde SOLO JSON sin markdown: {"id": <Id del match o null>, "confianza": "alta|media|baja"}. '
+            'Si no hay una persona que claramente sea la misma, id=null.'
+        )
+        msg = client.messages.create(
+            model='claude-haiku-4-5-20251001', max_tokens=100,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        raw = msg.content[0].text.strip()
+        raw = _re.sub(r'^```(?:json)?\s*', '', raw, flags=_re.IGNORECASE)
+        raw = _re.sub(r'```\s*$', '', raw).strip()
+        dec = json.loads(raw)
+        if dec.get('id') and dec.get('confianza') in ('alta', 'media'):
+            for p in personal_list:
+                if p.get('Id') == dec['id']:
+                    print(f'[CLAUDE MATCH] "{nombre_input}" -> {p.get("nombre_completo")} (conf {dec.get("confianza")})')
+                    return p
+        print(f'[CLAUDE MATCH] "{nombre_input}" -> sin match (id={dec.get("id")} conf={dec.get("confianza")})')
+    except Exception as e:
+        print('[CLAUDE MATCH] error:', e)
+    return None
+
+
 app = FastAPI(title="OpsFlow BV - Viaticos & EPPs Service", version="1.1")
 
 # Config via env
@@ -306,8 +348,11 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
                 candidatos.append(p)
         if len(candidatos) == 1:
             return candidatos[0]
-        # Si hay varios, devolver el primero (advertencia se incluye en meta)
-        return candidatos[0] if candidatos else None
+        if candidatos:
+            # Si hay varios, devolver el primero (advertencia se incluye en meta)
+            return candidatos[0]
+        # Sin match por tokens -> fallback con criterio (Claude)
+        return _claude_match_worker(nombre_input, personal_list)
 
     results = []
     no_match = []
