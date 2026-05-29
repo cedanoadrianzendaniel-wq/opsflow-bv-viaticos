@@ -289,9 +289,13 @@ async def procesar_epp_masivo(file: UploadFile = File(...)):
     def find_trab(nombre_input: str):
         """Match fuzzy: tokens del input deben aparecer en personal.nombre_completo."""
         import unicodedata
+        import re as _re
         def norm(s):
             s = unicodedata.normalize('NFD', str(s or '').upper())
             s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+            # Quitar puntuacion (comas, puntos, etc.) -> solo letras/numeros/espacios
+            s = _re.sub(r'[^A-Z0-9 ]', ' ', s)
+            s = _re.sub(r'\s+', ' ', s).strip()
             return s
         tokens_input = [t for t in norm(nombre_input).split() if len(t) >= 3]
         if not tokens_input: return None
