@@ -376,6 +376,31 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
         c = item['worker']['cliente']
         totals_por_cliente[c] = totals_por_cliente.get(c, 0) + item['worker']['total']
 
+    # Detalle por trabajador (para enviar viatico individual despues del deposito)
+    workers_detail = []
+    for item in workers_with_personal:
+        w = item['worker']
+        p = item['personal']
+        workers_detail.append({
+            'dni': p.get('dni',''),
+            'nombre_completo': p.get('nombre_completo',''),
+            'cliente': w.get('cliente',''),
+            'cargo': p.get('puesto') or w.get('cargo',''),
+            'correo_personal': p.get('correo_personal',''),
+            'correo_corporativo': p.get('correo_corporativo',''),
+            'telefono': p.get('telefono',''),
+            'banco': p.get('banco',''),
+            'cuenta_cci': p.get('cuenta_cci',''),
+            'items': {
+                'alimentacion_hospedaje': float(w.get('cat_A', 0) or 0),
+                'alquiler_equipos': float(w.get('cat_B', 0) or 0),
+                'transporte_movilizacion': float(w.get('cat_C', 0) or 0),
+                'lavado_limpieza': float(w.get('cat_D', 0) or 0),
+                'otros_bonos': float(w.get('cat_E', 0) or 0),
+            },
+            'total': float(w.get('total', 0) or 0),
+        })
+
     metadata = {
         'mes_label': mes_label,
         'matched': len(workers_with_personal),
@@ -384,5 +409,6 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
         'totals_por_cliente': totals_por_cliente,
         'total_monto': sum(totals_por_cliente.values()),
         'cliente_principal': cliente_principal,
+        'workers_detail': workers_detail,
     }
     return {'consolidado_xlsx': consolidado, 'macro_xlsm': macro, 'metadata': metadata}
