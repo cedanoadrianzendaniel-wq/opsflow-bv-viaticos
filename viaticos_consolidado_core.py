@@ -117,17 +117,27 @@ def _parse_single_cliente_sheet(wb):
                 if any(x in str(nombre).upper() for x in ('TOTAL','SUBTOTAL','SUMA')):
                     continue
                 cats = {'cat_A':0.0,'cat_B':0.0,'cat_C':0.0,'cat_D':0.0,'cat_E':0.0}
+                comments = {'cat_A':[], 'cat_B':[], 'cat_C':[], 'cat_D':[], 'cat_E':[]}
                 for ci, cat in cat_cols:
-                    v = ws.cell(row=r, column=ci).value
-                    if v is None: continue
-                    try: cats[cat] += float(v)
-                    except (ValueError, TypeError): continue
+                    cell = ws.cell(row=r, column=ci)
+                    v = cell.value
+                    if v is not None:
+                        try: cats[cat] += float(v)
+                        except (ValueError, TypeError): pass
+                    if cell.comment and cell.comment.text:
+                        txt = str(cell.comment.text).strip()
+                        if txt: comments[cat].append(txt)
                 try:
                     total = float(ws.cell(row=r, column=col_total).value) if col_total else sum(cats.values())
                 except (ValueError, TypeError):
                     total = sum(cats.values())
                 if total <= 0:
                     continue
+                comment_total = ''
+                if col_total:
+                    tc = ws.cell(row=r, column=col_total)
+                    if tc.comment and tc.comment.text:
+                        comment_total = str(tc.comment.text).strip()
                 workers_out.append({
                     'nombre': str(nombre).strip(),
                     'cliente': cliente,
@@ -135,6 +145,8 @@ def _parse_single_cliente_sheet(wb):
                     'cargo': str(ws.cell(row=r, column=col_cargo).value or '').strip() if col_cargo else '',
                     'sector': '', 'localidad': '', 'dias_servicio': '',
                     **cats,
+                    'comments_by_cat': {k: ' | '.join(v) for k, v in comments.items()},
+                    'comment_total': comment_total,
                     'total': total,
                 })
             if workers_out:
@@ -185,18 +197,28 @@ def parse_consolidado_final(content: bytes):
             and isinstance(b, str) and b.strip()
             and (isinstance(c, (int, float)) or (isinstance(c, str) and c.strip().replace('.','').isdigit()))):
             cats = {'cat_A': 0.0, 'cat_B': 0.0, 'cat_C': 0.0, 'cat_D': 0.0, 'cat_E': 0.0}
+            comments = {'cat_A': [], 'cat_B': [], 'cat_C': [], 'cat_D': [], 'cat_E': []}
             for ci, cat in current_cols_map.items():
-                v = ws.cell(row=r, column=ci).value
+                cell = ws.cell(row=r, column=ci)
+                v = cell.value
                 if v is None or (isinstance(v, str) and not v.strip()):
-                    continue
-                try:
-                    cats[cat] += float(v)
-                except (ValueError, TypeError):
-                    continue
+                    pass
+                else:
+                    try:
+                        cats[cat] += float(v)
+                    except (ValueError, TypeError):
+                        pass
+                if cell.comment and cell.comment.text:
+                    txt = str(cell.comment.text).strip()
+                    if txt:
+                        comments[cat].append(txt)
             try:
                 total = float(l)
             except (ValueError, TypeError):
                 total = sum(cats.values())
+            # Comentario del total (col L) si existe
+            total_cell = ws.cell(row=r, column=12)
+            comment_total = (total_cell.comment.text.strip() if total_cell.comment and total_cell.comment.text else '')
             workers.append({
                 'nombre': b.strip(),
                 'cliente': current_block_cliente,
@@ -206,6 +228,8 @@ def parse_consolidado_final(content: bytes):
                 'localidad': '',    # no disponible
                 'dias_servicio': '',# no disponible
                 **cats,
+                'comments_by_cat': {k: ' | '.join(v) for k, v in comments.items()},
+                'comment_total': comment_total,
                 'total': total,
             })
 
@@ -381,6 +405,7 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
     for item in workers_with_personal:
         w = item['worker']
         p = item['personal']
+        cmt = w.get('comments_by_cat', {}) or {}
         workers_detail.append({
             'dni': p.get('dni',''),
             'nombre_completo': p.get('nombre_completo',''),
@@ -398,6 +423,14 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
                 'lavado_limpieza': float(w.get('cat_D', 0) or 0),
                 'otros_bonos': float(w.get('cat_E', 0) or 0),
             },
+            'comments': {
+                'alimentacion_hospedaje': cmt.get('cat_A',''),
+                'alquiler_equipos': cmt.get('cat_B',''),
+                'transporte_movilizacion': cmt.get('cat_C',''),
+                'lavado_limpieza': cmt.get('cat_D',''),
+                'otros_bonos': cmt.get('cat_E',''),
+            },
+            'comment_total': w.get('comment_total','') or '',
             'total': float(w.get('total', 0) or 0),
         })
 
