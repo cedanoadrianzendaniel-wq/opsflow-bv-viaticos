@@ -255,9 +255,7 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
             f'<c r="H{row_n}"><v>{w["total"]}</v></c>',
             f'<c r="I{row_n}" t="s"><v>{get_str_idx(f"VIATICO {ref_cliente}")}</v></c>',
         ]
-        correo = p.get('correo_corporativo') or p.get('correo_personal') or ''
-        if correo:
-            cells.append(f'<c r="J{row_n}" t="s"><v>{get_str_idx(correo)}</v></c>')
+        # Correo NO se incluye en el TXT/macro de viaticos (decision Daniel 2026-06-17)
         new_rows.append(f'<row r="{row_n}">{"".join(cells)}</row>')
         row_n += 1
 
