@@ -274,6 +274,11 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
     if not has_any:
         sheet_xml_new = sheet_xml_new.replace('</sheetData>', f'{"".join(new_rows)}</sheetData>')
 
+    # Remover proteccion de la hoja para que Tesoreria pueda copiar/pegar a la macro Scotia oficial
+    # (el template original tiene sheetProtection con selectLockedCells=1 que bloquea copia de B,C,E,G,K)
+    sheet_xml_new = re.sub(r'<sheetProtection[^/]*/>', '', sheet_xml_new)
+    sheet_xml_new = re.sub(r'<sheetProtection[^>]*>.*?</sheetProtection>', '', sheet_xml_new, flags=re.DOTALL)
+
     files[sheet_path] = sheet_xml_new.encode('utf-8')
 
     if new_strings_xml:
