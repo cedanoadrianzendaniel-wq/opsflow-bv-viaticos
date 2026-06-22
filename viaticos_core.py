@@ -233,6 +233,10 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
         doc_str = str(p.get('dni',''))
         if tipo_doc == 'CE' and len(doc_str) < 9:
             doc_str = doc_str.zfill(9)
+        elif tipo_doc == 'DNI':
+            # DNI peruano estandar: 7-8 digitos sin leading zeros.
+            # Scotia rechaza DNI de 9 chars (001767067 etc — eso es formato CE)
+            doc_str = doc_str.lstrip('0') or '0'
         # Para Scotiabank (interno): cuenta de 10 digitos va en col F, forma de pago "CTA. AHORROS SOLES"
         # Para otros bancos: CCI de 20 digitos va en col G, forma de pago "CTA. INTERBANCARIA SOLES"
         is_scotia = (p.get('banco') or '').upper() == 'SCOTIABANK'
