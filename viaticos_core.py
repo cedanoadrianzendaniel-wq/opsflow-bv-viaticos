@@ -15,7 +15,16 @@ TEMPLATE_MACRO = os.path.join(TEMPLATES_DIR, 'macro_template.xlsm')
 
 # === MATCHING ===
 def normalize_name(s):
-    return ''.join(c for c in (s or '').upper().strip() if c.isalpha() or c == ' ').strip()
+    import unicodedata
+    # Normalizar separadores invisibles a espacio (xa0=non-breaking, comas, tabs, etc.)
+    s = (s or '').replace('\xa0', ' ').replace(',', ' ').replace('\t', ' ')
+    # Quitar acentos
+    s = unicodedata.normalize('NFD', s.upper().strip())
+    s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+    # Solo letras + espacio (descarta puntos, parentesis, numeros)
+    s = ''.join(c for c in s if c.isalpha() or c == ' ')
+    # Collapse multi-espacio
+    return ' '.join(s.split())
 
 def levenshtein(a, b):
     if len(a) < len(b): a, b = b, a
