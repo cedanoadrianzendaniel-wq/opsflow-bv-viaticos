@@ -246,8 +246,13 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
                 doc_str = doc_str.zfill(9)
             doc_str = doc_str.ljust(12)
         elif tipo_doc == 'DNI':
-            # DNI peruano: 8 digitos sin leading zeros, padded a 12 con trailing spaces
-            doc_str = (doc_str.lstrip('0') or '0').ljust(12)
+            # DNI peruano estandar = 8 digitos. Casos:
+            # - 9 chars con "00": formato CE mal marcado → quita el "00"
+            # - 7 chars: pad con leading zero a 8
+            # - 8 chars: keep as is
+            if len(doc_str) == 9 and doc_str.startswith('00'):
+                doc_str = doc_str[2:]
+            doc_str = doc_str.zfill(8).ljust(12)
         # Para Scotiabank (interno): cuenta de 10 digitos va en col F, forma de pago "CTA. AHORROS SOLES"
         # Para otros bancos: CCI de 20 digitos va en col G, forma de pago "CTA. INTERBANCARIA SOLES"
         is_scotia = (p.get('banco') or '').upper() == 'SCOTIABANK'
