@@ -54,59 +54,73 @@ def _project_to_cliente(project_name):
     return None
 
 
-def _parse_single_cliente_sheet(wb):
+def _parse_single_cliente_sheet(wb, filename_hint=None):
     """Formato 'Viaticos {CLIENTE}' con 1 hoja de datos, columnas:
     NOMBRES, DNI/CE, CARGO, PROYECTO, BANCO, N.CUENTA, CCI, ALIMENTACION, ALQUILER, BONOS, OTROS, TOTAL.
     Busca la hoja que tenga esos headers (puede llamarse 'Viaticos APM', 'Viaticos TDP', etc.)
+    Tambien acepta formato 'simple' tipo TGP: 1 hoja cualquiera con N + NOMBRE SUPERVISOR + categorias, sin DNI/cargo/total.
     Devuelve list[worker] o None si no detecta el formato.
     """
-    # Iterar todas las sheets buscando una con headers conocidos
-    HEADER_KEY = {'nombres','dni','cargo','alimentacion','total'}
+    HEADER_KEY_CAT = {'alimentacion','hospedaje','agua','alquiler','combustible','movilidad','movilizacion','transporte','lavanderia','lavado','cochera','otros','bonos','copias'}
     for sname in wb.sheetnames:
         ws = wb[sname]
-        if ws.max_row < 3 or ws.max_column < 10:
+        if ws.max_row < 3 or ws.max_column < 4:
             continue
-        # Probar fila 1, 2, 3 como header
         for header_row in (1, 2, 3):
             cols = {}
             for ci in range(1, ws.max_column + 1):
                 h = _norm_col(ws.cell(row=header_row, column=ci).value)
                 if h: cols[h] = ci
-            # Match keys
-            found = {k: v for k, v in cols.items() if any(k.startswith(p) or p in k for p in HEADER_KEY)}
-            if len(found) < 4:  # debe tener al menos 4 headers conocidos
+            has_nombres = any('nombre' in k or 'supervisor' in k for k in cols)
+            # Necesita al menos 1 columna de categoria
+            has_categoria = any(any(p in k for p in HEADER_KEY_CAT) for k in cols)
+            if not (has_nombres and has_categoria):
                 continue
-            # Validar que tenga nombres + total + al menos 1 categoria
-            has_nombres = any('nombre' in k for k in cols)
-            has_total = any('total' in k for k in cols)
-            if not (has_nombres and has_total):
-                continue
-            # Mapeo de columnas
-            col_nombre = next((v for k,v in cols.items() if 'nombre' in k), None)
-            col_dni = next((v for k,v in cols.items() if 'dni' in k or 'ce' == k), None)
+            # Mapeo de columnas (nombre puede ser "NOMBRE", "NOMBRES" o "NOMBRE SUPERVISOR")
+            col_nombre = next((v for k,v in cols.items() if 'nombre' in k or 'supervisor' in k), None)
+            col_dni = next((v for k,v in cols.items() if 'dni' in k or k == 'ce'), None)
             col_cargo = next((v for k,v in cols.items() if 'cargo' in k), None)
             col_proyecto = next((v for k,v in cols.items() if 'proyecto' in k), None)
             col_total = next((v for k,v in cols.items() if 'total' in k), None)
-            # Categorias
-            cat_cols = []  # (col_idx, cat_letter)
+            # Si hay multiples cols con 'bono', preferir la NETA (con "%" o "neto" o "2.5") y excluir bruta
+            bono_keys = [k for k in cols if 'bono' in k]
+            excluded = set()
+            if len(bono_keys) > 1:
+                neto_keys = [k for k in bono_keys if '%' in k or 'neto' in k or '2.5' in k]
+                keep = neto_keys[0] if neto_keys else bono_keys[-1]
+                for bk in bono_keys:
+                    if bk != keep:
+                        excluded.add(cols[bk])
+            cat_cols = []
             for k, v in cols.items():
+                if v in excluded: continue
                 if any(p in k for p in ['alimentacion','hospedaje','agua']):
                     cat_cols.append((v, 'cat_A'))
                 elif 'alquiler' in k:
                     cat_cols.append((v, 'cat_B'))
-                elif any(p in k for p in ['combustible','movilizacion','transporte']):
+                elif any(p in k for p in ['combustible','movilizacion','transporte','movilidad']):
                     cat_cols.append((v, 'cat_C'))
                 elif any(p in k for p in ['lavanderia','lavado','cochera']):
                     cat_cols.append((v, 'cat_D'))
                 elif any(p in k for p in ['otros','bonos','bono','copias']):
                     cat_cols.append((v, 'cat_E'))
-            # Inferir cliente del nombre de la hoja
+            if not cat_cols:
+                continue
+            # Inferir cliente del nombre de la hoja primero, despues del filename
             sname_upper = sname.upper()
             cliente = None
             for c in ('TGP','TDP','APM','PPC','COGA'):
                 if c in sname_upper:
                     cliente = 'PPC-PLUSPETROL' if c == 'PPC' else c
                     break
+            if not cliente and filename_hint:
+                fn_upper = str(filename_hint).upper()
+                for c in ('TGP','TDP','APM','PPC','COGA','PLUSPETROL'):
+                    if c in fn_upper:
+                        cliente = 'PPC-PLUSPETROL' if c in ('PPC','PLUSPETROL') else c
+                        break
+            if not cliente:
+                cliente = 'BV'
             # Iterar filas de datos
             workers_out = []
             for r in range(header_row + 1, ws.max_row + 1):
@@ -154,7 +168,7 @@ def _parse_single_cliente_sheet(wb):
     return None
 
 
-def parse_consolidado_final(content: bytes):
+def parse_consolidado_final(content: bytes, filename_hint=None):
     """Detecta y parsea ambos formatos:
     1) Multi-bloques agrupados por proyecto (Viaticos Proyecto Varios)
     2) Single cliente con hoja 'Viaticos {CLIENTE}' y columnas fijas (Viaticos APM Terminals)
@@ -235,7 +249,7 @@ def parse_consolidado_final(content: bytes):
 
     # Si no encontro bloques multi-cliente, probar formato single-cliente
     if not workers:
-        single = _parse_single_cliente_sheet(wb)
+        single = _parse_single_cliente_sheet(wb, filename_hint=filename_hint)
         if single:
             workers = single
 
@@ -352,11 +366,11 @@ Reglas:
     return out
 
 
-def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_label):
+def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_label, filename_hint=None):
     """Pipeline completo: parsea + matchea + genera consolidado + macro.
     Devuelve {'consolidado_xlsx': bytes, 'macro_xlsm': bytes, 'metadata': dict}.
     """
-    parsed = parse_consolidado_final(content)
+    parsed = parse_consolidado_final(content, filename_hint=filename_hint)
     if not parsed:
         raise ValueError('No se detectaron trabajadores en el archivo. Revisa estructura de bloques.')
 

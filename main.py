@@ -288,7 +288,7 @@ async def procesar_viaticos_consolidado_final_endpoint(
         clientes_list = http_get(f'{NOCO_BASE}/tables/{TABLE_CLIENTES}/records?limit=20').get('list', [])
 
         content = await file.read()
-        result = process_consolidado_final(content, personal_list, clientes_list, mes_label)
+        result = process_consolidado_final(content, personal_list, clientes_list, mes_label, filename_hint=file.filename)
 
         return {
             'consolidado_xlsx_b64': base64.b64encode(result['consolidado_xlsx']).decode('ascii'),
