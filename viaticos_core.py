@@ -231,12 +231,14 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
         if not p.get('cuenta_cci') or not p.get('banco'): continue
         tipo_doc = p.get('tipo_documento') or 'DNI'
         doc_str = str(p.get('dni',''))
-        if tipo_doc == 'CE' and len(doc_str) < 9:
-            doc_str = doc_str.zfill(9)
+        if tipo_doc == 'CE':
+            # CE: leading zeros 9 chars + trailing spaces hasta 12 (Scotia CHAR(12))
+            if len(doc_str) < 9:
+                doc_str = doc_str.zfill(9)
+            doc_str = doc_str.ljust(12)
         elif tipo_doc == 'DNI':
-            # DNI peruano estandar: 7-8 digitos sin leading zeros.
-            # Scotia rechaza DNI de 9 chars (001767067 etc — eso es formato CE)
-            doc_str = doc_str.lstrip('0') or '0'
+            # DNI peruano: 8 digitos sin leading zeros, padded a 12 con trailing spaces
+            doc_str = (doc_str.lstrip('0') or '0').ljust(12)
         # Para Scotiabank (interno): cuenta de 10 digitos va en col F, forma de pago "CTA. AHORROS SOLES"
         # Para otros bancos: CCI de 20 digitos va en col G, forma de pago "CTA. INTERBANCARIA SOLES"
         is_scotia = (p.get('banco') or '').upper() == 'SCOTIABANK'
@@ -244,7 +246,9 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
         cells = [
             f'<c r="B{row_n}" t="s"><v>{get_str_idx("CARNET EXTRANJERÍA" if tipo_doc == "CE" else "DNI")}</v></c>',
             f'<c r="C{row_n}" t="s"><v>{get_str_idx(doc_str)}</v></c>',
-            f'<c r="D{row_n}" t="s"><v>{get_str_idx(p.get("nombre_completo",""))}</v></c>',
+            # Nombre: Scotia espera "Nombres Apellidos" (no "Apellidos Nombres" como en NocoDB)
+            # Convencion peruana NocoDB: "APELLIDO1 APELLIDO2 NOMBRE1 NOMBRE2" -> reordenar a "NOMBRE1 NOMBRE2 APELLIDO1 APELLIDO2"
+            f'<c r="D{row_n}" t="s"><v>{get_str_idx((lambda nc: " ".join(nc.split()[2:] + nc.split()[:2]) if len((nc or "").split()) >= 4 else (nc or ""))(p.get("nombre_completo","")))}</v></c>',
             f'<c r="E{row_n}" t="s"><v>{get_str_idx(forma_pago)}</v></c>',
         ]
         if is_scotia:
