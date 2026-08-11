@@ -71,26 +71,39 @@ def _parse_single_cliente_sheet(wb, filename_hint=None):
             for ci in range(1, ws.max_column + 1):
                 h = _norm_col(ws.cell(row=header_row, column=ci).value)
                 if h: cols[h] = ci
-            has_nombres = any('nombre' in k or 'supervisor' in k for k in cols)
+            has_nombres = any('nombre' in k or 'supervisor' in k or k.startswith('proyecto') or 'trabajador' in k or 'empleado' in k or 'colaborador' in k for k in cols)
             # Necesita al menos 1 columna de categoria
             has_categoria = any(any(p in k for p in HEADER_KEY_CAT) for k in cols)
             if not (has_nombres and has_categoria):
                 continue
             # Mapeo de columnas (nombre puede ser "NOMBRE", "NOMBRES" o "NOMBRE SUPERVISOR")
-            col_nombre = next((v for k,v in cols.items() if 'nombre' in k or 'supervisor' in k), None)
+            col_nombre = next((v for k,v in cols.items() if 'nombre' in k or 'supervisor' in k or k.startswith('proyecto') or 'trabajador' in k or 'empleado' in k or 'colaborador' in k), None)
             col_dni = next((v for k,v in cols.items() if 'dni' in k or k == 'ce'), None)
             col_cargo = next((v for k,v in cols.items() if 'cargo' in k), None)
             col_proyecto = next((v for k,v in cols.items() if 'proyecto' in k), None)
             col_total = next((v for k,v in cols.items() if 'total' in k), None)
-            # Si hay multiples cols con 'bono', preferir la NETA (con "%" o "neto" o "2.5") y excluir bruta
+            # Dedup bono: excluir cols con TODOS zeros (placeholders) o preferir neta (%, neto, 2.5)
             bono_keys = [k for k in cols if 'bono' in k]
             excluded = set()
             if len(bono_keys) > 1:
-                neto_keys = [k for k in bono_keys if '%' in k or 'neto' in k or '2.5' in k]
-                keep = neto_keys[0] if neto_keys else bono_keys[-1]
+                # Check which bono cols have any non-zero data in rows
+                data_start = header_row + 1
+                bono_with_data = []
                 for bk in bono_keys:
-                    if bk != keep:
-                        excluded.add(cols[bk])
+                    ci = cols[bk]
+                    has = any(
+                        (ws.cell(row=r, column=ci).value is not None) and
+                        (isinstance(ws.cell(row=r, column=ci).value, (int, float)) and float(ws.cell(row=r, column=ci).value) != 0)
+                        for r in range(data_start, min(data_start+50, ws.max_row+1))
+                    )
+                    if has: bono_with_data.append(bk)
+                    else: excluded.add(ci)  # excluye placeholder vacio
+                # Si aun quedan 2+, preferir la NETA
+                if len(bono_with_data) > 1:
+                    neto_keys = [k for k in bono_with_data if '%' in k or 'neto' in k or '2.5' in k]
+                    keep = neto_keys[0] if neto_keys else bono_with_data[-1]
+                    for bk in bono_with_data:
+                        if bk != keep: excluded.add(cols[bk])
             cat_cols = []
             for k, v in cols.items():
                 if v in excluded: continue
@@ -102,7 +115,7 @@ def _parse_single_cliente_sheet(wb, filename_hint=None):
                     cat_cols.append((v, 'cat_C'))
                 elif any(p in k for p in ['lavanderia','lavado','cochera']):
                     cat_cols.append((v, 'cat_D'))
-                elif any(p in k for p in ['otros','bonos','bono','copias']):
+                elif any(p in k for p in ['otros','bonos','bono','copias','reembolso']):
                     cat_cols.append((v, 'cat_E'))
             if not cat_cols:
                 continue
