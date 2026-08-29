@@ -511,3 +511,147 @@ def onboarding_presigned_urls():
             ExpiresIn=604800,  # 7 dias
         )
     return urls
+
+
+# ============================================================
+# ENVIAR ACTAS EPP - distribuir PDFs pre-generados
+# ============================================================
+BREVO_API_KEY = os.environ.get('BREVO_API_KEY', '')
+WATI_TOKEN = os.environ.get('WATI_TOKEN', '')
+WATI_BASE = os.environ.get('WATI_BASE', 'https://live-mt-server.wati.io/10160457')
+WATI_TEMPLATE_EPP = os.environ.get('WATI_TEMPLATE_EPP', 'entrega_epp_bv')
+
+
+@app.post("/enviar_actas_batch")
+async def enviar_actas_batch(
+    files: list[UploadFile] = File(...),
+    dnis: str = Form(...),  # JSON list of DNIs mismo orden que files
+    dry_run: bool = Form(False),
+):
+    """Distribuye N actas EPP pre-generadas (PDF) por email + WA.
+
+    Para cada (file, dni):
+      1. Busca trabajador en NocoDB por DNI -> email/telefono/cliente
+      2. Sube PDF a MinIO -> presigned URL (7d)
+      3. Email Brevo con PDF adjunto (correo personal preferido)
+      4. WA Wati template 'entrega_epp_bv' con presigned URL en header document
+
+    Devuelve JSON: {ok:[...], fail:[...]}
+    """
+    import base64, datetime as _dt
+    if not NOCO_API_TOKEN:
+        raise HTTPException(500, "NOCO_API_TOKEN no configurado")
+    try:
+        dnis_list = json.loads(dnis)
+    except Exception:
+        raise HTTPException(400, "dnis debe ser JSON array de strings")
+    if len(dnis_list) != len(files):
+        raise HTTPException(400, f"len(dnis)={len(dnis_list)} != len(files)={len(files)}")
+
+    s3 = _s3_client()
+    lima = _dt.datetime.utcnow() - _dt.timedelta(hours=5)
+    date_str = lima.strftime("%Y-%m-%d")
+    ts = int(_dt.datetime.utcnow().timestamp() * 1000)
+
+    ok, fail = [], []
+    for idx, (f, dni) in enumerate(zip(files, dnis_list)):
+        pdf_bytes = await f.read()
+        entry = {'dni': dni, 'filename': f.filename}
+        try:
+            # 1. Match trabajador
+            resp = http_get(f'{NOCO_BASE}/tables/{TABLE_PERSONAL}/records?where=(dni,eq,{dni})&limit=1')
+            if not resp.get('list'):
+                fail.append({**entry, 'err': f'DNI {dni} no encontrado en NocoDB'})
+                continue
+            trab = resp['list'][0]
+            nombre = trab.get('nombre_completo') or ''
+            email = trab.get('correo_personal') or trab.get('correo_corporativo')
+            tel = str(trab.get('telefono') or '').strip()
+            cliente = trab.get('cliente') or 'BV'
+
+            # 2. Upload MinIO
+            key = f'epps/{date_str}/{ts}_{idx}_{f.filename}'
+            s3.put_object(Bucket=MINIO_BUCKET, Key=key, Body=pdf_bytes, ContentType='application/pdf')
+            presigned = s3.generate_presigned_url(
+                'get_object', Params={'Bucket': MINIO_BUCKET, 'Key': key}, ExpiresIn=604800
+            )
+            entry['presigned_url'] = presigned
+
+            if dry_run:
+                entry['dry_run'] = True
+                entry['nombre'] = nombre
+                entry['email'] = email
+                entry['telefono'] = tel
+                ok.append(entry)
+                continue
+
+            # 3. Email Brevo con PDF adjunto
+            email_status = None
+            if email:
+                brevo_payload = {
+                    'sender': {'name':'Operaciones BV','email':'noreply@opsflow.pe'},
+                    'to': [{'email':email,'name':nombre}],
+                    'replyTo': {'email':'cedano.adrianzen.daniel@gmail.com','name':'Daniel Cedano'},
+                    'subject': f'Acta de Entrega de EPP - {nombre}',
+                    'htmlContent': (
+                        f'<p>Estimado(a) <b>{nombre}</b>,</p>'
+                        f'<p>Adjunto encontraras el <b>Acta de Entrega de Equipos de Proteccion Personal (F-004)</b> '
+                        f'correspondiente a tu asignacion en el proyecto <b>{cliente}</b>.</p>'
+                        f'<p>Por favor revisa el documento adjunto, firmalo y devuelvelo por este mismo medio '
+                        f'o entregalo fisicamente en oficina. Cualquier consulta o correccion de talla, '
+                        f'avisa antes de firmar.</p><br>'
+                        f'<p>Saludos cordiales,<br><b>Operaciones BV</b><br>Bureau Veritas Peru</p>'
+                    ),
+                    'attachment': [{'name': f.filename, 'content': base64.b64encode(pdf_bytes).decode()}],
+                }
+                req = urllib.request.Request('https://api.brevo.com/v3/smtp/email',
+                    data=json.dumps(brevo_payload).encode(),
+                    headers={'api-key':BREVO_API_KEY,'Content-Type':'application/json','accept':'application/json'})
+                try:
+                    r = urllib.request.urlopen(req, timeout=30)
+                    email_status = f'ok {r.status}'
+                except urllib.error.HTTPError as e:
+                    email_status = f'HTTP {e.code}: {e.read().decode()[:200]}'
+            else:
+                email_status = 'sin_email'
+            entry['email_status'] = email_status
+
+            # 4. WA Wati template
+            wa_status = None
+            if tel:
+                tel_clean = ''.join(c for c in tel if c.isdigit())
+                if tel_clean and not tel_clean.startswith('51'):
+                    tel_clean = '51' + tel_clean
+                if tel_clean:
+                    wa_payload = {
+                        'template_name': WATI_TEMPLATE_EPP,
+                        'broadcast_name': f'actas_epp_{date_str}',
+                        'parameters': [
+                            {'name':'1','value':nombre},
+                            {'name':'2','value':cliente},
+                        ],
+                        'header_values': [presigned],
+                    }
+                    wa_url = f'{WATI_BASE}/api/v1/sendTemplateMessage?whatsappNumber={tel_clean}'
+                    req = urllib.request.Request(wa_url,
+                        data=json.dumps(wa_payload).encode(),
+                        headers={'Authorization':f'Bearer {WATI_TOKEN}','Content-Type':'application/json'})
+                    try:
+                        r = urllib.request.urlopen(req, timeout=30)
+                        wa_status = f'ok {r.status}'
+                    except urllib.error.HTTPError as e:
+                        wa_status = f'HTTP {e.code}: {e.read().decode()[:200]}'
+                else:
+                    wa_status = 'telefono_invalido'
+            else:
+                wa_status = 'sin_telefono'
+            entry['wa_status'] = wa_status
+
+            entry['nombre'] = nombre
+            entry['email'] = email
+            entry['telefono'] = tel
+            ok.append(entry)
+        except Exception as e:
+            fail.append({**entry, 'err': str(e)[:300]})
+
+    return {'ok': ok, 'fail': fail, 'total': len(files)}
