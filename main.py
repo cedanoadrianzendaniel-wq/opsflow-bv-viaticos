@@ -595,6 +595,7 @@ async def enviar_actas_batch(
                 brevo_payload = {
                     'sender': {'name':'Operaciones BV','email':'noreply@opsflow.pe'},
                     'to': [{'email':email,'name':nombre}],
+                    'cc': [{'email':'cedano.adrianzen.daniel@gmail.com','name':'Daniel Cedano - Planner Operaciones BV'}],
                     'replyTo': {'email':'cedano.adrianzen.daniel@gmail.com','name':'Daniel Cedano'},
                     'subject': f'Acta de Entrega de EPP - {nombre}',
                     'htmlContent': (
