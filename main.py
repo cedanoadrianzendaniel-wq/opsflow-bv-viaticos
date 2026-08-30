@@ -527,6 +527,8 @@ async def enviar_actas_batch(
     files: list[UploadFile] = File(...),
     dnis: str = Form(...),  # JSON list of DNIs mismo orden que files
     dry_run: bool = Form(False),
+    only_wa: bool = Form(False),   # skip email step (util para reintentos)
+    only_email: bool = Form(False),  # skip WA step
 ):
     """Distribuye N actas EPP pre-generadas (PDF) por email + WA.
 
@@ -587,7 +589,9 @@ async def enviar_actas_batch(
 
             # 3. Email Brevo con PDF adjunto
             email_status = None
-            if email:
+            if only_wa:
+                email_status = 'skipped'
+            elif email:
                 brevo_payload = {
                     'sender': {'name':'Operaciones BV','email':'noreply@opsflow.pe'},
                     'to': [{'email':email,'name':nombre}],
@@ -618,7 +622,9 @@ async def enviar_actas_batch(
 
             # 4. WA Wati template
             wa_status = None
-            if tel:
+            if only_email:
+                wa_status = 'skipped'
+            elif tel:
                 tel_clean = ''.join(c for c in tel if c.isdigit())
                 if tel_clean and not tel_clean.startswith('51'):
                     tel_clean = '51' + tel_clean
@@ -635,7 +641,8 @@ async def enviar_actas_batch(
                     wa_url = f'{WATI_BASE}/api/v1/sendTemplateMessage?whatsappNumber={tel_clean}'
                     req = urllib.request.Request(wa_url,
                         data=json.dumps(wa_payload).encode(),
-                        headers={'Authorization':f'Bearer {WATI_TOKEN}','Content-Type':'application/json'})
+                        headers={'Authorization':f'Bearer {WATI_TOKEN}','Content-Type':'application/json',
+                                 'User-Agent':'Mozilla/5.0 (compatible) opsflow-bv-viaticos'})
                     try:
                         r = urllib.request.urlopen(req, timeout=30)
                         wa_status = f'ok {r.status}'
