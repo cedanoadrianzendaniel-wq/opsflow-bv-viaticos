@@ -12,7 +12,7 @@ Reusa generate_consolidado_xlsx y una version multi-cliente de generate_macro_xl
 """
 import io, re, unicodedata
 from openpyxl import load_workbook
-from viaticos_core import match_worker, generate_consolidado_xlsx, generate_macro_xlsm
+from viaticos_core import match_worker, generate_consolidado_xlsx, generate_macro_xlsm, generate_macro_haberes_bcp_xls
 
 
 # Columnas (normalizadas) -> categoria F-ADM-002
@@ -418,6 +418,21 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
     cliente_label = cliente_principal or 'BV'
     macro = generate_macro_xlsm(workers_with_personal, cliente_label)
 
+    # NUEVO: generar macros BCP .xls agrupadas por proyecto (una por cliente)
+    # Referencia va en el header: 'viatico TGP', 'viatico TDP', etc.
+    workers_by_cliente = {}
+    for item in workers_with_personal:
+        c = item['worker'].get('cliente') or cliente_label
+        workers_by_cliente.setdefault(c, []).append(item)
+    macros_haberes_bcp = {}
+    for cli, items in workers_by_cliente.items():
+        ref_cli = (cli or 'BV').split('-')[0].strip()  # PPC-PLUSPETROL -> PPC
+        referencia = f'viatico {ref_cli}'
+        macros_haberes_bcp[cli] = {
+            'filename': f'Haberes_BCP_{ref_cli}_{mes_label}.xls',
+            'bytes': generate_macro_haberes_bcp_xls(items, referencia),
+        }
+
     sin_cci = [item['personal'].get('nombre_completo','') for item in workers_with_personal
                if not item['personal'].get('cuenta_cci')]
 
@@ -471,4 +486,5 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
         'cliente_principal': cliente_principal,
         'workers_detail': workers_detail,
     }
-    return {'consolidado_xlsx': consolidado, 'macro_xlsm': macro, 'metadata': metadata}
+    return {'consolidado_xlsx': consolidado, 'macro_xlsm': macro,
+            'macros_haberes_bcp': macros_haberes_bcp, 'metadata': metadata}

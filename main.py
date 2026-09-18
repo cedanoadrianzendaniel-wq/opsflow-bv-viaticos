@@ -290,9 +290,17 @@ async def procesar_viaticos_consolidado_final_endpoint(
         content = await file.read()
         result = process_consolidado_final(content, personal_list, clientes_list, mes_label, filename_hint=file.filename)
 
+        # Macros BCP Haberes (nuevo formato, una por proyecto/cliente)
+        macros_haberes_bcp_b64 = {}
+        for cli, info in (result.get('macros_haberes_bcp') or {}).items():
+            macros_haberes_bcp_b64[cli] = {
+                'filename': info['filename'],
+                'b64': base64.b64encode(info['bytes']).decode('ascii'),
+            }
         return {
             'consolidado_xlsx_b64': base64.b64encode(result['consolidado_xlsx']).decode('ascii'),
             'macro_xlsm_b64': base64.b64encode(result['macro_xlsm']).decode('ascii'),
+            'macros_haberes_bcp_b64': macros_haberes_bcp_b64,  # NUEVO: {cliente: {filename, b64}}
             'consolidado_filename': f'Consolidado_Viaticos_MultiCliente_{mes_label}.xlsx',
             'macro_filename': f'Macro_SCT_Soles_MultiCliente_{mes_label}.xlsm',
             'metadata': result['metadata'],

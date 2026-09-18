@@ -313,6 +313,86 @@ def generate_macro_xlsm(workers_with_personal, cliente_label):
             zout.writestr(n, files[n])
     return out_buf.getvalue()
 
+# === MACRO BCP HABERES (nuevo formato .xls, reemplaza Scotia .xlsm) ===
+CUENTA_CARGO_BCP_BV = os.environ.get('CUENTA_CARGO_BCP_BV', '1931127179045')
+CODIGO_CLIENTE_BCP = os.environ.get('CODIGO_CLIENTE_BCP', '000000')
+
+def generate_macro_haberes_bcp_xls(workers_with_personal, referencia, fecha_proceso=None):
+    """Genera el archivo .xls formato BCP 'Archivo Excel para Pago de Haberes'.
+
+    workers_with_personal: lista de {'worker': {..., 'total'}, 'personal': {..., 'banco', 'cuenta_cci', ...}}
+    referencia: string ej 'viatico TGP', 'viatico TDP' (va al header como Referencia de la planilla)
+    fecha_proceso: 'YYYYMMDD', default hoy
+    """
+    import xlwt
+    if fecha_proceso is None:
+        fecha_proceso = datetime.now().strftime('%Y%m%d')
+
+    valid_items = [item for item in workers_with_personal
+                   if item.get('personal') and item['personal'].get('cuenta_cci') and item['personal'].get('banco')]
+    monto_total = sum(float(item['worker'].get('total', 0) or 0) for item in valid_items)
+
+    wb = xlwt.Workbook(encoding='utf-8')
+    ws = wb.add_sheet('Archivo Excel Haberes Input')
+    txt = xlwt.XFStyle(); txt.num_format_str = '@'
+    bold = xlwt.XFStyle(); bold.num_format_str = '@'
+    fb = xlwt.Font(); fb.bold = True; bold.font = fb
+
+    # DATOS GENERALES
+    ws.write(0, 0, 'DATOS GENERALES', bold)
+    ws.write(1, 0, 'Código de Cliente', bold)
+    ws.write(1, 1, 'Tipo de Planilla', bold)
+    ws.write(2, 0, CODIGO_CLIENTE_BCP, txt)
+    ws.write(2, 1, 'HABER', txt)
+
+    # DATOS DEL CARGO
+    ws.write(4, 0, 'DATOS DEL CARGO', bold)
+    cargo_h = ['Tipo de Registro','Cantidad de abonos de la planilla','Fecha de proceso',
+               'Subtipo de Planilla de Haberes','Tipo de Cuenta de cargo','Cuenta de cargo',
+               'Monto total de la planilla','Referencia de la planilla']
+    for i, h in enumerate(cargo_h):
+        ws.write(5, i, h, bold)
+    cargo_row = ['C', f'{len(valid_items):06d}', fecha_proceso, 'O', 'C',
+                 CUENTA_CARGO_BCP_BV, f'{monto_total:.2f}', referencia]
+    for i, v in enumerate(cargo_row):
+        ws.write(6, i, v, txt)
+
+    # DATOS DEL ABONO
+    ws.write(8, 0, 'DATOS DEL ABONO', bold)
+    abono_h = ['Tipo de Registro','Tipo de Cuenta de Abono','Cuenta de Abono',
+               'Tipo de Documento de Identidad','Número de Documento de Identidad',
+               'Nombre del Trabajador','Tipo de Moneda de Abono','Monto de Abono',
+               'Validación IDC del proveedor vs Cuenta']
+    for i, h in enumerate(abono_h):
+        ws.write(9, i, h, bold)
+
+    for idx, item in enumerate(valid_items):
+        w, p = item['worker'], item['personal']
+        r = 10 + idx
+        banco = (p.get('banco') or '').upper()
+        tipo_cta = 'A' if banco == 'BCP' else 'B'  # A=BCP mismo banco, B=interbancario
+        tipo_doc_str = (p.get('tipo_documento') or 'DNI').upper()
+        tipo_doc = '1' if tipo_doc_str == 'DNI' else '4'  # 1=DNI, 4=CE
+        dni_padded = str(p.get('dni','')).ljust(12)  # trailing spaces hasta 12 chars
+        # Nombre: NocoDB tiene "APELLIDO1 APELLIDO2 NOMBRE1 NOMBRE2" -> reordenar a "NOMBRE1 NOMBRE2 APELLIDO1 APELLIDO2"
+        nc = p.get('nombre_completo','') or ''
+        parts = nc.split()
+        nombre = ' '.join(parts[2:] + parts[:2]) if len(parts) >= 4 else nc
+        moneda = p.get('tipo_moneda') or 'S'
+        monto = float(w.get('total', 0) or 0)
+        row = ['A', tipo_cta, str(p.get('cuenta_cci','')), tipo_doc, dni_padded, nombre,
+               moneda, f'{monto:.2f}', 'S']
+        for i, v in enumerate(row):
+            ws.write(r, i, v, txt)
+
+    for i, w_ in enumerate([12, 10, 25, 12, 22, 45, 10, 15, 12]):
+        ws.col(i).width = w_ * 256
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 # === API ===
 def process_viaticos(content_bytes, cliente_label, mes_label, personal_list, cliente_data):
     """Procesa el Excel de viaticos y devuelve los 2 outputs + metadata."""
