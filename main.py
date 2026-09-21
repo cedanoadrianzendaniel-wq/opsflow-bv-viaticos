@@ -708,6 +708,108 @@ class GenerarDjDetalleRequest(_BaseModel):
     sheet_titulo: _Optional[str] = None
 
 
+@app.post("/enviar_detalle_batch")
+def enviar_detalle_batch(mes_label: str = Form(...), clientes: str = Form('')):
+    """Envia por email a cada supervisor del lote (mes+clientes) el DJ+xlsx individual.
+    - mes_label: YYYY-MM
+    - clientes: CSV opcional 'TGP,TDP'. Si vacio, todos los del mes.
+    Devuelve {ok, fail, skip}.
+    """
+    import base64, urllib.parse, time
+    TABLE_DOCS = 'm63lrpr412yqms5'
+    cli_list = [c.strip().upper() for c in (clientes or '').split(',') if c.strip()]
+
+    # 1. Traer viaticos_docs del mes
+    docs_all = []
+    for cli in (cli_list or [None]):
+        where = f'(codigo_lote,like,%{mes_label}%)'
+        if cli: where += f'~and(cliente,eq,{cli})'
+        wq = urllib.parse.quote(where)
+        resp = http_get(f'{NOCO_BASE}/tables/{TABLE_DOCS}/records?where={wq}&limit=200&fields=Id,codigo_lote,cliente,dni_trabajador,nombre_trabajador,cargo,hospedaje_alimentacion,alquiler_equipos,transporte,lavado_limpieza,otros,total,observaciones')
+        docs_all.extend(resp.get('list') or [])
+
+    # Dedup por DNI
+    by_dni = {}
+    for d in docs_all:
+        dni = str(d.get('dni_trabajador','')).strip()
+        if not dni: continue
+        if dni not in by_dni or d['Id'] > by_dni[dni]['Id']:
+            by_dni[dni] = d
+    unique = list(by_dni.values())
+
+    ok, fail, skip = [], [], []
+    for d in unique:
+        try: obs = json.loads(d.get('observaciones') or '{}')
+        except Exception: obs = {}
+        correos = [c for c in [obs.get('correo_personal'), obs.get('correo_corporativo')] if c]
+        if not correos:
+            skip.append({'dni':d['dni_trabajador'],'nombre':d['nombre_trabajador'],'cliente':d.get('cliente'),'razon':'sin correo'})
+            continue
+
+        # Generar DJ + xlsx via función interna
+        nombre = d.get('nombre_trabajador','')
+        cliente = d.get('cliente') or 'BV'
+        cargo = d.get('cargo') or ''
+        items_dict = {
+            'alimentacion_hospedaje': float(d.get('hospedaje_alimentacion') or 0),
+            'alquiler_equipos': float(d.get('alquiler_equipos') or 0),
+            'transporte_movilizacion': float(d.get('transporte') or 0),
+            'lavado_limpieza': float(d.get('lavado_limpieza') or 0),
+            'otros_bonos': float(d.get('otros') or 0)
+        }
+        monto = float(d.get('total') or 0)
+        try:
+            dj = generate_anticipo_pdf(nombre_completo=nombre, dni=d['dni_trabajador'],
+                cargo=cargo, division='Industria', monto=monto)
+            det = generate_detalle_individual_xlsx(nombre=nombre, dni=d['dni_trabajador'],
+                cargo=cargo, cliente=cliente, mes_label=mes_label, items=items_dict,
+                comments=obs.get('comments') or {},
+                columnas_originales=obs.get('columnas_originales'),
+                sheet_titulo=obs.get('sheet_titulo'))
+        except Exception as e:
+            fail.append({'dni':d['dni_trabajador'],'nombre':nombre,'err':f'gen: {str(e)[:200]}'})
+            continue
+
+        import re as _re
+        safe = _re.sub(r'[^A-Za-z0-9_-]','_', nombre)[:40]
+        dj_fn = f'DJ_Anticipo_{d["dni_trabajador"]}_{safe}.pdf'
+        det_fn = f'Detalle_Viatico_{mes_label}_{d["dni_trabajador"]}_{safe}.xlsx'
+
+        html = (f'<p>Estimado(a) <b>{nombre}</b>,</p>'
+                f'<p>Tu viatico ({cliente}) del periodo <b>{mes_label}</b> ya fue procesado por Bureau Veritas del Peru.</p>'
+                f'<p><b>TOTAL: S/ {monto:,.2f}</b></p>'
+                f'<p><b>Adjuntos:</b></p><ol>'
+                f'<li><b>Detalle de tu viatico (Excel)</b> con las columnas del cuadro original.</li>'
+                f'<li><b>DJ Solicitud de Anticipo (PDF)</b> firma y devuelve por este mismo correo.</li></ol>'
+                f'<p>Cualquier consulta escribe a <b>fiorella.diaz@bureauveritas.com</b> o WhatsApp <b>+51 997 141 773</b>.</p>'
+                f'<p>Saludos,<br><b>Asistente Admin | Bureau Veritas Peru</b></p>')
+        brevo_body = {
+            'sender': {'email':'asistente@opsflow.pe','name':'Asistente Admin | Bureau Veritas Peru'},
+            'replyTo': {'email':'fiorella.diaz@bureauveritas.com','name':'Fiorella Diaz'},
+            'cc': [{'email':'daniel@opsflow.pe','name':'Daniel Cedano'},
+                   {'email':'cedano.adrianzen.daniel@gmail.com','name':'Daniel Cedano'}],
+            'to': [{'email':c,'name':nombre} for c in correos],
+            'subject': f'Detalle Viatico - {nombre} - {mes_label.upper()}',
+            'htmlContent': html,
+            'attachment': [
+                {'content': base64.b64encode(det).decode(), 'name': det_fn},
+                {'content': base64.b64encode(dj).decode(), 'name': dj_fn},
+            ]
+        }
+        try:
+            req = urllib.request.Request('https://api.brevo.com/v3/smtp/email',
+                data=json.dumps(brevo_body).encode(),
+                headers={'api-key':BREVO_API_KEY,'Content-Type':'application/json','accept':'application/json'})
+            urllib.request.urlopen(req, timeout=60)
+            ok.append({'dni':d['dni_trabajador'],'nombre':nombre,'cliente':cliente,'to':correos})
+        except urllib.error.HTTPError as e:
+            fail.append({'dni':d['dni_trabajador'],'nombre':nombre,'err':f'brevo HTTP {e.code}: {e.read().decode()[:200]}'})
+        except Exception as e:
+            fail.append({'dni':d['dni_trabajador'],'nombre':nombre,'err':f'brevo: {str(e)[:200]}'})
+        time.sleep(0.2)
+    return {'ok': ok, 'fail': fail, 'skip': skip, 'total_procesados': len(unique)}
+
+
 @app.post("/generar_dj_detalle_individual")
 def generar_dj_detalle_individual(payload: GenerarDjDetalleRequest):
     """Genera los 2 adjuntos (DJ PDF + xlsx detalle) para un trabajador dado.
