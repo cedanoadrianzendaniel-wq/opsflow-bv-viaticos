@@ -143,6 +143,38 @@ def _parse_single_cliente_sheet(wb, filename_hint=None):
                         break
             if not cliente:
                 cliente = 'BV'
+            # Snapshot de headers ORIGINALES del cuadro (para replicar formato al enviar detalle individual)
+            # Estructura: [{col_letter, col_idx, header, header_super (fila superior), factor (fila entre header y datos si existe)}]
+            header_snapshot = []
+            super_header_row = header_row - 1 if header_row > 1 else None
+            factor_row = None
+            # heuristica: si header_row=3 y row 2 tiene numeros (factores), guardarlos
+            if header_row >= 3:
+                candidate = header_row - 1
+                if any(isinstance(ws.cell(row=candidate, column=ci).value, (int, float))
+                       for ci in range(1, ws.max_column + 1)):
+                    factor_row = candidate
+                    super_header_row = header_row - 2 if header_row > 2 else None
+            from openpyxl.utils import get_column_letter as _gcl
+            for ci in range(1, ws.max_column + 1):
+                h = ws.cell(row=header_row, column=ci).value
+                h_super = ws.cell(row=super_header_row, column=ci).value if super_header_row else None
+                # Header efectivo: prefiere fila 3 (header_row), fallback a fila 1 (super) para cols como VIATICOS/TOTAL
+                header_eff = None
+                if h is not None and str(h).strip():
+                    header_eff = str(h).strip()
+                elif h_super is not None and str(h_super).strip():
+                    header_eff = str(h_super).strip()
+                if not header_eff:
+                    continue
+                header_snapshot.append({
+                    'col_idx': ci,
+                    'col_letter': _gcl(ci),
+                    'header': header_eff,
+                    'header_super': str(h_super).strip() if h_super else '',
+                    'factor': ws.cell(row=factor_row, column=ci).value if factor_row else None,
+                })
+
             # Iterar filas de datos
             workers_out = []
             for r in range(header_row + 1, ws.max_row + 1):
@@ -154,6 +186,17 @@ def _parse_single_cliente_sheet(wb, filename_hint=None):
                     continue
                 cats = {'cat_A':0.0,'cat_B':0.0,'cat_C':0.0,'cat_D':0.0,'cat_E':0.0}
                 comments = {'cat_A':[], 'cat_B':[], 'cat_C':[], 'cat_D':[], 'cat_E':[]}
+                # Capturar TODAS las columnas originales para este trabajador (para replicar cuadro)
+                columnas_originales = []
+                for hs in header_snapshot:
+                    val = ws.cell(row=r, column=hs['col_idx']).value
+                    columnas_originales.append({
+                        'col_letter': hs['col_letter'],
+                        'header': hs['header'],
+                        'header_super': hs['header_super'],
+                        'factor': hs['factor'],
+                        'valor': val,
+                    })
                 for ci, cat in cat_cols:
                     cell = ws.cell(row=r, column=ci)
                     v = cell.value
@@ -184,6 +227,8 @@ def _parse_single_cliente_sheet(wb, filename_hint=None):
                     'comments_by_cat': {k: ' | '.join(v) for k, v in comments.items()},
                     'comment_total': comment_total,
                     'total': total,
+                    'columnas_originales': columnas_originales,
+                    'sheet_titulo': str(ws.cell(row=1, column=6).value or '').strip() or f'VIATICOS {sname}',
                 })
             if workers_out:
                 return workers_out
@@ -486,6 +531,8 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
             },
             'comment_total': w.get('comment_total','') or '',
             'total': float(w.get('total', 0) or 0),
+            'columnas_originales': w.get('columnas_originales') or [],
+            'sheet_titulo': w.get('sheet_titulo') or '',
         })
 
     metadata = {

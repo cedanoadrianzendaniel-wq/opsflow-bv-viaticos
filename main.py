@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from viaticos_core import process_viaticos
 from epps_core import generate_epp_excel, EPP_LIST, parse_excel_masivo
 from viaticos_consolidado_core import process_consolidado_final, parse_consolidado_final
+from anticipos_core import generate_anticipo_pdf, generate_detalle_individual_xlsx
 import boto3
 from botocore.client import Config as BotoConfig
 
@@ -678,3 +679,86 @@ async def enviar_actas_batch(
             fail.append({**entry, 'err': str(e)[:300]})
 
     return {'ok': ok, 'fail': fail, 'total': len(files)}
+
+
+# ============================================================
+# DJ + DETALLE INDIVIDUAL - genera adjuntos para el workflow n8n de envio detalle
+# ============================================================
+from pydantic import BaseModel as _BaseModel
+from typing import Dict as _Dict, Optional as _Optional, List as _List
+
+
+class DetalleItems(_BaseModel):
+    alimentacion_hospedaje: _Optional[float] = 0
+    alquiler_equipos: _Optional[float] = 0
+    transporte_movilizacion: _Optional[float] = 0
+    lavado_limpieza: _Optional[float] = 0
+    otros_bonos: _Optional[float] = 0
+
+
+class GenerarDjDetalleRequest(_BaseModel):
+    dni: str
+    monto: float
+    items: DetalleItems
+    comments: _Optional[_Dict[str, str]] = None
+    mes_label: str
+    cliente: _Optional[str] = None
+    fecha_solicitud: _Optional[str] = None  # 'YYYY-MM-DD' - default hoy
+    columnas_originales: _Optional[_List[_Dict]] = None  # replicar formato cuadro
+    sheet_titulo: _Optional[str] = None
+
+
+@app.post("/generar_dj_detalle_individual")
+def generar_dj_detalle_individual(payload: GenerarDjDetalleRequest):
+    """Genera los 2 adjuntos (DJ PDF + xlsx detalle) para un trabajador dado.
+
+    Busca el trabajador en NocoDB por DNI para completar nombre/cargo/division/correo.
+    Devuelve JSON con ambos archivos en base64 + metadata del trabajador.
+    """
+    import base64, re
+    if not NOCO_API_TOKEN:
+        raise HTTPException(500, "NOCO_API_TOKEN no configurado")
+
+    # Match NocoDB por DNI
+    resp = http_get(f'{NOCO_BASE}/tables/{TABLE_PERSONAL}/records?where=(dni,eq,{payload.dni})&limit=1')
+    if not resp.get('list'):
+        raise HTTPException(404, f"Trabajador con DNI {payload.dni} no encontrado en NocoDB")
+    trab = resp['list'][0]
+    nombre = trab.get('nombre_completo') or ''
+    cargo = trab.get('puesto') or ''
+    division = trab.get('division') or 'Industria'
+    cliente = payload.cliente or trab.get('cliente') or 'BV'
+
+    # DJ PDF
+    dj_pdf = generate_anticipo_pdf(
+        nombre_completo=nombre, dni=payload.dni, cargo=cargo, division=division,
+        monto=payload.monto, fecha_solicitud=payload.fecha_solicitud,
+    )
+    dj_filename = f'DJ_Anticipo_{payload.dni}_{re.sub(r"[^A-Za-z0-9_-]","_", nombre)[:40]}.pdf'
+
+    # xlsx detalle (usa formato cuadro original si vienen columnas)
+    detalle_xlsx = generate_detalle_individual_xlsx(
+        nombre=nombre, dni=payload.dni, cargo=cargo, cliente=cliente,
+        mes_label=payload.mes_label,
+        items=payload.items.model_dump(),
+        comments=payload.comments or {},
+        columnas_originales=payload.columnas_originales,
+        sheet_titulo=payload.sheet_titulo,
+    )
+    detalle_filename = f'Detalle_Viatico_{payload.mes_label}_{payload.dni}_{re.sub(r"[^A-Za-z0-9_-]","_", nombre)[:40]}.xlsx'
+
+    return {
+        'dj_pdf_b64': base64.b64encode(dj_pdf).decode('ascii'),
+        'dj_filename': dj_filename,
+        'detalle_xlsx_b64': base64.b64encode(detalle_xlsx).decode('ascii'),
+        'detalle_filename': detalle_filename,
+        'trabajador': {
+            'dni': payload.dni,
+            'nombre': nombre,
+            'cargo': cargo,
+            'division': division,
+            'cliente': cliente,
+            'correo_personal': trab.get('correo_personal'),
+            'correo_corporativo': trab.get('correo_corporativo'),
+        }
+    }
