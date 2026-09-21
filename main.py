@@ -723,7 +723,7 @@ def debug_brevo_events(email: str, limit: int = 15):
 
 
 @app.post("/enviar_detalle_batch")
-def enviar_detalle_batch(mes_label: str = Form(...), clientes: str = Form('')):
+def enviar_detalle_batch(mes_label: str = Form(...), clientes: str = Form(''), dnis: str = Form('')):
     """Envia por email a cada supervisor del lote (mes+clientes) el DJ+xlsx individual.
     - mes_label: YYYY-MM
     - clientes: CSV opcional 'TGP,TDP'. Si vacio, todos los del mes.
@@ -732,6 +732,7 @@ def enviar_detalle_batch(mes_label: str = Form(...), clientes: str = Form('')):
     import base64, urllib.parse, time
     TABLE_DOCS = 'm63lrpr412yqms5'
     cli_list = [c.strip().upper() for c in (clientes or '').split(',') if c.strip()]
+    dni_filter = set(d.strip() for d in (dnis or '').split(',') if d.strip())
 
     # 1. Traer viaticos_docs del mes
     docs_all = []
@@ -747,6 +748,7 @@ def enviar_detalle_batch(mes_label: str = Form(...), clientes: str = Form('')):
     for d in docs_all:
         dni = str(d.get('dni_trabajador','')).strip()
         if not dni: continue
+        if dni_filter and dni not in dni_filter: continue
         if dni not in by_dni or d['Id'] > by_dni[dni]['Id']:
             by_dni[dni] = d
     unique = list(by_dni.values())
