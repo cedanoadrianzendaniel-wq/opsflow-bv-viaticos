@@ -708,6 +708,37 @@ class GenerarDjDetalleRequest(_BaseModel):
     sheet_titulo: _Optional[str] = None
 
 
+@app.get("/debug_brevo_blocked")
+def debug_brevo_blocked(email: str):
+    """Verifica si un email esta en la blocked list de Brevo."""
+    try:
+        req = urllib.request.Request(
+            f'https://api.brevo.com/v3/smtp/blockedContacts/{urllib.parse.quote(email)}',
+            headers={'api-key': BREVO_API_KEY, 'accept':'application/json'})
+        return {'blocked': True, 'data': json.loads(urllib.request.urlopen(req, timeout=15).read())}
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {'blocked': False}
+        return {'error': f'HTTP {e.code}', 'body': e.read().decode()[:400]}
+    except Exception as e:
+        return {'error': str(e)[:400]}
+
+
+@app.delete("/debug_brevo_unblock")
+def debug_brevo_unblock(email: str):
+    """Elimina un email de la blocked list de Brevo."""
+    try:
+        req = urllib.request.Request(
+            f'https://api.brevo.com/v3/smtp/blockedContacts/{urllib.parse.quote(email)}',
+            method='DELETE', headers={'api-key': BREVO_API_KEY, 'accept':'application/json'})
+        urllib.request.urlopen(req, timeout=15)
+        return {'unblocked': True, 'email': email}
+    except urllib.error.HTTPError as e:
+        return {'error': f'HTTP {e.code}', 'body': e.read().decode()[:400]}
+    except Exception as e:
+        return {'error': str(e)[:400]}
+
+
 @app.get("/debug_brevo_events")
 def debug_brevo_events(email: str, limit: int = 15):
     """Consulta eventos Brevo para un email destinatario."""
