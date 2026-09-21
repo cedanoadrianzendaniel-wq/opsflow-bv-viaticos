@@ -67,10 +67,18 @@ def _parse_single_cliente_sheet(wb, filename_hint=None):
         if ws.max_row < 3 or ws.max_column < 4:
             continue
         for header_row in (1, 2, 3):
+            # Soportar headers duplicados (ej: dos cols "BONO" en TGP Setiembre):
+            # usar sufijos _2, _3, ... para no sobreescribir.
             cols = {}
             for ci in range(1, ws.max_column + 1):
                 h = _norm_col(ws.cell(row=header_row, column=ci).value)
-                if h: cols[h] = ci
+                if not h: continue
+                if h in cols:
+                    n = 2
+                    while f'{h}_{n}' in cols: n += 1
+                    cols[f'{h}_{n}'] = ci
+                else:
+                    cols[h] = ci
             has_nombres = any('nombre' in k or 'supervisor' in k or k.startswith('proyecto') or 'trabajador' in k or 'empleado' in k or 'colaborador' in k for k in cols)
             # Necesita al menos 1 columna de categoria
             has_categoria = any(any(p in k for p in HEADER_KEY_CAT) for k in cols)
