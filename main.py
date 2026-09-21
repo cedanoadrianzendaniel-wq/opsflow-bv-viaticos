@@ -297,10 +297,17 @@ async def procesar_viaticos_consolidado_final_endpoint(
                 'filename': info['filename'],
                 'b64': base64.b64encode(info['bytes']).decode('ascii'),
             }
+        # DJs Anticipo (1 PDF por trabajador con monto > 0)
+        djs_anticipo_b64 = [
+            {'filename': dj['filename'], 'dni': dj['dni'], 'nombre': dj['nombre'],
+             'monto': dj['monto'], 'b64': base64.b64encode(dj['pdf_bytes']).decode('ascii')}
+            for dj in (result.get('djs_anticipo') or [])
+        ]
         return {
             'consolidado_xlsx_b64': base64.b64encode(result['consolidado_xlsx']).decode('ascii'),
             'macro_xlsm_b64': base64.b64encode(result['macro_xlsm']).decode('ascii'),
-            'macros_haberes_bcp_b64': macros_haberes_bcp_b64,  # NUEVO: {cliente: {filename, b64}}
+            'macros_haberes_bcp_b64': macros_haberes_bcp_b64,  # {cliente: {filename, b64}}
+            'djs_anticipo_b64': djs_anticipo_b64,  # NUEVO: [{filename, dni, nombre, monto, b64}, ...]
             'consolidado_filename': f'Consolidado_Viaticos_MultiCliente_{mes_label}.xlsx',
             'macro_filename': f'Macro_SCT_Soles_MultiCliente_{mes_label}.xlsm',
             'metadata': result['metadata'],

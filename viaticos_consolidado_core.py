@@ -13,6 +13,7 @@ Reusa generate_consolidado_xlsx y una version multi-cliente de generate_macro_xl
 import io, re, unicodedata
 from openpyxl import load_workbook
 from viaticos_core import match_worker, generate_consolidado_xlsx, generate_macro_xlsm, generate_macro_haberes_bcp_xls
+from anticipos_core import generate_anticipos_batch
 
 
 # Columnas (normalizadas) -> categoria F-ADM-002
@@ -441,6 +442,9 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
             'bytes': generate_macro_haberes_bcp_xls(items, referencia),
         }
 
+    # DJs Solicitud de Anticipo (1 PDF por trabajador matcheado con monto > 0)
+    djs_anticipo = generate_anticipos_batch(workers_with_personal)
+
     sin_cci = [item['personal'].get('nombre_completo','') for item in workers_with_personal
                if not item['personal'].get('cuenta_cci')]
 
@@ -495,4 +499,5 @@ def process_consolidado_final(content: bytes, personal_list, clientes_list, mes_
         'workers_detail': workers_detail,
     }
     return {'consolidado_xlsx': consolidado, 'macro_xlsm': macro,
-            'macros_haberes_bcp': macros_haberes_bcp, 'metadata': metadata}
+            'macros_haberes_bcp': macros_haberes_bcp,
+            'djs_anticipo': djs_anticipo, 'metadata': metadata}
