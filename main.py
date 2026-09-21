@@ -847,12 +847,17 @@ def enviar_detalle_batch(mes_label: str = Form(...), clientes: str = Form(''), d
             req = urllib.request.Request('https://api.brevo.com/v3/smtp/email',
                 data=json.dumps(brevo_body).encode(),
                 headers={'api-key':BREVO_API_KEY,'Content-Type':'application/json','accept':'application/json'})
-            urllib.request.urlopen(req, timeout=60)
-            ok.append({'dni':d['dni_trabajador'],'nombre':nombre,'cliente':cliente,'to':correos})
+            r = urllib.request.urlopen(req, timeout=60)
+            resp_body = r.read().decode()
+            try: resp_json = json.loads(resp_body)
+            except Exception: resp_json = {'raw': resp_body[:200]}
+            ok.append({'dni':d['dni_trabajador'],'nombre':nombre,'cliente':cliente,'to':correos,
+                       'brevo_status': r.status, 'brevo_messageId': resp_json.get('messageId','?'),
+                       'brevo_raw': resp_json})
         except urllib.error.HTTPError as e:
-            fail.append({'dni':d['dni_trabajador'],'nombre':nombre,'err':f'brevo HTTP {e.code}: {e.read().decode()[:200]}'})
+            fail.append({'dni':d['dni_trabajador'],'nombre':nombre,'err':f'brevo HTTP {e.code}: {e.read().decode()[:300]}'})
         except Exception as e:
-            fail.append({'dni':d['dni_trabajador'],'nombre':nombre,'err':f'brevo: {str(e)[:200]}'})
+            fail.append({'dni':d['dni_trabajador'],'nombre':nombre,'err':f'brevo: {str(e)[:300]}'})
         time.sleep(0.2)
     return {'ok': ok, 'fail': fail, 'skip': skip, 'total_procesados': len(unique)}
 
