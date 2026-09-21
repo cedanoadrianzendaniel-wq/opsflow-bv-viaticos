@@ -10,7 +10,7 @@ Devuelve un ZIP con:
   - Macro_SCT_Soles_{cliente}_{mes}.xlsm
   - result.json (metadata: matched, no_match, sin_cci, total_monto)
 """
-import os, io, json, zipfile, urllib.request
+import os, io, json, zipfile, urllib.request, urllib.parse
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from viaticos_core import process_viaticos
@@ -706,6 +706,20 @@ class GenerarDjDetalleRequest(_BaseModel):
     fecha_solicitud: _Optional[str] = None  # 'YYYY-MM-DD' - default hoy
     columnas_originales: _Optional[_List[_Dict]] = None  # replicar formato cuadro
     sheet_titulo: _Optional[str] = None
+
+
+@app.get("/debug_brevo_events")
+def debug_brevo_events(email: str, limit: int = 15):
+    """Consulta eventos Brevo para un email destinatario."""
+    try:
+        req = urllib.request.Request(
+            f'https://api.brevo.com/v3/smtp/statistics/events?email={urllib.parse.quote(email)}&limit={limit}&sort=desc',
+            headers={'api-key': BREVO_API_KEY, 'accept':'application/json'})
+        return json.loads(urllib.request.urlopen(req, timeout=30).read())
+    except urllib.error.HTTPError as e:
+        return {'error': f'HTTP {e.code}', 'body': e.read().decode()[:500]}
+    except Exception as e:
+        return {'error': str(e)[:500]}
 
 
 @app.post("/enviar_detalle_batch")
