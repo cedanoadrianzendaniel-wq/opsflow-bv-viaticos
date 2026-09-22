@@ -11,7 +11,7 @@ Devuelve un ZIP con:
   - result.json (metadata: matched, no_match, sin_cci, total_monto)
 """
 import os, io, json, zipfile, urllib.request, urllib.parse
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import StreamingResponse, JSONResponse
 from viaticos_core import process_viaticos
 from epps_core import generate_epp_excel, EPP_LIST, parse_excel_masivo
@@ -706,6 +706,23 @@ class GenerarDjDetalleRequest(_BaseModel):
     fecha_solicitud: _Optional[str] = None  # 'YYYY-MM-DD' - default hoy
     columnas_originales: _Optional[_List[_Dict]] = None  # replicar formato cuadro
     sheet_titulo: _Optional[str] = None
+
+
+@app.post("/enviar_email_brevo")
+def enviar_email_brevo(brevo_body: dict = Body(...)):
+    """Passthrough generico: reenvia un brevo_body arbitrario usando la API key del server
+    (IP whitelisted). Util para envios puntuales desde scripts locales que Brevo bloquearia
+    por IP no reconocida."""
+    try:
+        req = urllib.request.Request('https://api.brevo.com/v3/smtp/email',
+            data=json.dumps(brevo_body).encode(),
+            headers={'api-key':BREVO_API_KEY,'Content-Type':'application/json','accept':'application/json'})
+        r = urllib.request.urlopen(req, timeout=60)
+        return {'ok': True, 'status': r.status, 'body': json.loads(r.read().decode())}
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code, content={'ok': False, 'error': e.read().decode()[:500]})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={'ok': False, 'error': str(e)[:500]})
 
 
 @app.get("/debug_brevo_blocked")
